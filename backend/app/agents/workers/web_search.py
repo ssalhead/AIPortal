@@ -5,13 +5,16 @@
 import time
 import asyncio
 import httpx
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from urllib.parse import quote_plus
 import json
 import logging
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.agents.llm_router import llm_router
+from app.services.search_service import search_service
+from app.db.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -27,52 +30,67 @@ class WebSearchAgent(BaseAgent):
         )
     
     async def execute(self, input_data: AgentInput, model: str = "gemini") -> AgentOutput:
-        """웹 검색 실행"""
+        """웹 검색 실행 (개선된 버전 - 캐싱 지원)"""
         start_time = time.time()
         
         if not self.validate_input(input_data):
             raise ValueError("유효하지 않은 입력 데이터")
         
-        try:
-            # 검색어 추출 및 정제
-            search_query = await self._extract_search_query(input_data.query, model)
-            
-            # 웹 검색 수행
-            search_results = await self._perform_web_search(search_query)
-            
-            # 검색 결과 요약
-            summary = await self._summarize_results(
-                input_data.query,
-                search_results,
-                model
-            )
-            
-            execution_time = int((time.time() - start_time) * 1000)
-            
-            metadata = {
-                "search_query": search_query,
-                "results_count": len(search_results),
-                "sources": [result.get("url", "") for result in search_results[:3]],
-                "search_method": "mock_search"  # 실제 구현에서는 실제 검색 API 사용
-            }
-            
-            return self.create_output(
-                result=summary,
-                metadata=metadata,
-                execution_time_ms=execution_time,
-                model_used=model
-            )
-            
-        except Exception as e:
-            self.logger.error(f"웹 검색 실행 중 오류: {e}")
-            execution_time = int((time.time() - start_time) * 1000)
-            
-            return self.create_output(
-                result=f"죄송합니다. 웹 검색 중 오류가 발생했습니다: {str(e)}",
-                metadata={"error": str(e)},
-                execution_time_ms=execution_time,
-                model_used=model
-            )
+        async with AsyncSessionLocal() as session:
+            try:
+                # 검색어 추출 및 정제
+                search_query = await self._extract_search_query(input_data.query, model)
+                
+                # 새로운 검색 서비스를 사용한 웹 검색
+                search_results = await search_service.search_web(
+                    query=search_query,
+                    max_results=5,
+                    use_cache=True,
+                    session=session
+                )
+                
+                # 검색 결과 요약 (검색 서비스의 요약 기능 사용)
+                summary = await search_service.summarize_results(
+                    query=input_data.query,
+                    results=search_results,
+                    session=session
+                )
+                
+                # LLM을 사용한 추가 분석
+                enhanced_summary = await self._enhance_summary(
+                    original_query=input_data.query,
+                    search_summary=summary,
+                    model=model
+                )
+                
+                execution_time = int((time.time() - start_time) * 1000)
+                
+                metadata = {
+                    "search_query": search_query,
+                    "results_count": len(search_results),
+                    "sources": [result.url for result in search_results[:3]],
+                    "search_method": "enhanced_search_service",
+                    "cache_used": "검색 결과가 캐시되었습니다" if search_results else "새로운 검색 수행",
+                    "suggestions": await search_service.get_search_suggestions(search_query)
+                }
+                
+                return self.create_output(
+                    result=enhanced_summary,
+                    metadata=metadata,
+                    execution_time_ms=execution_time,
+                    model_used=model
+                )
+                
+            except Exception as e:
+                self.logger.error(f"웹 검색 실행 중 오류: {e}")
+                execution_time = int((time.time() - start_time) * 1000)
+                
+                return self.create_output(
+                    result=f"죄송합니다. 웹 검색 중 오류가 발생했습니다: {str(e)}",
+                    metadata={"error": str(e)},
+                    execution_time_ms=execution_time,
+                    model_used=model
+                )
     
     async def _extract_search_query(self, user_query: str, model: str) -> str:
         """사용자 질문에서 검색어 추출"""
@@ -97,6 +115,38 @@ class WebSearchAgent(BaseAgent):
         except Exception as e:
             self.logger.warning(f"검색어 추출 실패, 원본 쿼리 사용: {e}")
             return user_query
+    
+    async def _enhance_summary(
+        self,
+        original_query: str,
+        search_summary: str,
+        model: str
+    ) -> str:
+        """검색 요약을 LLM으로 더욱 향상시킴"""
+        try:
+            prompt = f"""
+사용자 질문: "{original_query}"
+
+웹 검색 요약:
+{search_summary}
+
+위의 검색 요약을 바탕으로 사용자 질문에 더욱 직접적이고 유용한 답변을 작성해주세요.
+
+개선 사항:
+1. 사용자 의도에 맞는 핵심 정보 강조
+2. 실용적인 조언이나 다음 단계 제안
+3. 관련된 추가 정보나 주의사항
+4. 더 읽기 쉬운 구조로 재구성
+
+한국어로 자연스럽고 도움이 되는 답변을 작성해주세요.
+"""
+            
+            response, _ = await llm_router.generate_response(model, prompt)
+            return response
+            
+        except Exception as e:
+            self.logger.warning(f"요약 향상 실패, 원본 요약 사용: {e}")
+            return search_summary
     
     async def _perform_web_search(self, query: str) -> List[Dict[str, Any]]:
         """웹 검색 수행 (Mock 구현)"""

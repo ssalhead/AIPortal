@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         raise ValueError(v)
     
     # 데이터베이스 설정
-    DATABASE_URL: Optional[str] = "postgresql://aiportal:aiportal123@localhost:5432/ai_portal"
+    DATABASE_URL: Optional[str] = "postgresql+asyncpg://aiportal:aiportal123@localhost:5432/ai_portal"
     REDIS_URL: Optional[str] = "redis://localhost:6379/0"
     
     # AWS 설정
@@ -79,6 +79,15 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS: List[str] = [".pdf", ".txt", ".docx", ".png", ".jpg", ".jpeg"]
     UPLOAD_DIR: str = "uploads"
+    
+    @field_validator("ALLOWED_EXTENSIONS", mode="before")
+    @classmethod
+    def assemble_allowed_extensions(cls, v: str | List[str]) -> List[str] | str:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            return v
+        raise ValueError(v)
     
     # 로깅 설정
     LOG_LEVEL: str = "INFO"

@@ -2,8 +2,9 @@
 AI 에이전트 서비스
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, AsyncGenerator
 import logging
+import asyncio
 
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
@@ -199,6 +200,66 @@ class AgentService:
                 "execution_time_ms": 0,
                 "model_used": model
             }
+    
+    async def stream_response(
+        self,
+        query: str,
+        model: str = "claude-3-haiku",
+        agent_type: str = "general",
+        conversation_id: str = None,
+        user_id: str = "default_user"
+    ) -> AsyncGenerator[str, None]:
+        """
+        스트리밍 응답 생성
+        
+        Args:
+            query: 사용자 쿼리
+            model: 사용할 모델
+            agent_type: 에이전트 타입
+            conversation_id: 대화 ID
+            user_id: 사용자 ID
+            
+        Yields:
+            응답 텍스트 청크
+        """
+        try:
+            # LLM 라우터를 통한 직접 스트리밍
+            from app.agents.llm_router import llm_router
+            
+            # 모델 이름 정규화
+            model_mapping = {
+                "claude-3-haiku": "claude",
+                "claude-3-sonnet": "claude", 
+                "claude-3-opus": "claude",
+                "gemini-pro": "gemini",
+                "gemini": "gemini",
+                "gpt-4": "openai",
+                "gpt-3.5-turbo": "openai"
+            }
+            
+            normalized_model = model_mapping.get(model, model)
+            
+            # 에이전트별 프롬프트 구성
+            if agent_type == "web_search":
+                prompt = f"웹 검색 요청: {query}\n\n최신 정보를 검색하여 정확하고 유용한 답변을 제공해주세요."
+            elif agent_type == "technical":
+                prompt = f"기술 질문: {query}\n\n기술적으로 정확하고 실용적인 답변을 제공해주세요."
+            else:
+                prompt = f"사용자 질문: {query}\n\n친근하고 도움이 되는 답변을 제공해주세요."
+            
+            # 컨텍스트 정보 추가
+            if conversation_id:
+                prompt += f"\n\n[대화 ID: {conversation_id}]"
+            if user_id:
+                prompt += f"\n[사용자 ID: {user_id}]"
+            
+            # LLM 라우터를 통한 스트리밍
+            async for chunk in llm_router.stream_response(normalized_model, prompt):
+                yield chunk
+                
+        except Exception as e:
+            logger.error(f"스트리밍 응답 생성 중 오류: {e}")
+            yield f"죄송합니다. 응답 생성 중 오류가 발생했습니다: {str(e)}"
 
 
 # 서비스 인스턴스

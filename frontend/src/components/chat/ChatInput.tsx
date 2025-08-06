@@ -8,11 +8,13 @@ import type { LLMModel, AgentType } from '../../types';
 interface ChatInputProps {
   onSendMessage: (message: string, model: LLMModel, agentType: AgentType) => void;
   isLoading?: boolean;
+  placeholder?: string;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSendMessage,
   isLoading = false,
+  placeholder = "메시지를 입력하세요... (Shift+Enter로 줄바꿈)",
 }) => {
   const [message, setMessage] = useState('');
   const [selectedModel, setSelectedModel] = useState<LLMModel>('gemini');
@@ -91,7 +93,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             value={message}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
-            placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+            placeholder={placeholder}
             className="w-full resize-none border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             style={{ minHeight: '40px', maxHeight: '120px' }}
             disabled={isLoading}

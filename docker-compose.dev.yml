@@ -1,0 +1,75 @@
+version: '3.8'
+
+# 개발 환경용 간단한 Docker Compose
+# 핵심 인프라만 실행 (PostgreSQL, Redis)
+
+services:
+  # PostgreSQL 데이터베이스
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai_portal_postgres_dev
+    environment:
+      POSTGRES_USER: aiportal
+      POSTGRES_PASSWORD: aiportal123
+      POSTGRES_DB: ai_portal
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      # 초기화 스크립트
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - ai_portal_dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiportal -d ai_portal"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis 캐시
+  redis:
+    image: redis:7-alpine
+    container_name: ai_portal_redis_dev
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ai_portal_dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL 관리 도구 (선택사항)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ai_portal_pgadmin_dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@aiportal.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_dev_data:/var/lib/pgadmin
+    networks:
+      - ai_portal_dev
+    depends_on:
+      - postgres
+    profiles:
+      - admin  # 필요시에만 실행: docker-compose --profile admin up
+    restart: unless-stopped
+
+networks:
+  ai_portal_dev:
+    driver: bridge
+    name: ai_portal_dev_network
+
+volumes:
+  postgres_dev_data:
+    name: ai_portal_postgres_dev_data
+  pgadmin_dev_data:
+    name: ai_portal_pgadmin_dev_data

@@ -2,14 +2,15 @@
 LLM 모델 라우터
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, AsyncGenerator
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import BaseLanguageModel
+from langchain_core.language_models import BaseLanguageModel
 import logging
 
 from app.core.config import settings
+from app.agents.mock_llm import mock_llm
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,13 @@ class LLMRouter:
         """
         return model_name.lower() in self._models
 
+    def is_mock_mode(self) -> bool:
+        """Mock 모드 여부 확인"""
+        return (
+            not any([settings.GOOGLE_API_KEY, settings.ANTHROPIC_API_KEY, settings.OPENAI_API_KEY]) or
+            getattr(settings, 'MOCK_LLM_ENABLED', False)
+        )
+
     async def generate_response(
         self, 
         model_name: str, 
@@ -134,40 +142,95 @@ class LLMRouter:
         Returns:
             (응답 텍스트, 실제 사용된 모델 이름)
         """
+        # Mock 모드 확인
+        if self.is_mock_mode():
+            logger.info(f"Mock 모드로 응답 생성 - 요청된 모델: {model_name}")
+            mock_model_name = f"mock-{model_name.lower()}"
+            response = mock_llm.generate_response(prompt, mock_model_name)
+            return response, mock_model_name
+        
         model = self.get_model(model_name)
         if model is None:
             raise ValueError(f"모델 '{model_name}'을 사용할 수 없습니다")
         
         try:
-            # Mock 응답 (실제 API 키가 없는 경우)
-            if not any([settings.GOOGLE_API_KEY, settings.ANTHROPIC_API_KEY, settings.OPENAI_API_KEY]):
-                logger.info(f"Mock 응답 생성 - 요청된 모델: {model_name}")
-                return (
-                    f"안녕하세요! {model_name} 모델을 사용한 Mock 응답입니다. "
-                    f"실제 API 키를 설정하면 진짜 AI 응답을 받을 수 있습니다. "
-                    f"프롬프트: {prompt[:100]}...",
-                    model_name
-                )
-            
             # 실제 모델 호출
             response = await model.ainvoke(prompt)
             return response.content, model_name
             
         except Exception as e:
             logger.error(f"모델 '{model_name}' 응답 생성 중 오류: {e}")
-            # Fallback 시도
-            fallback_model = self.get_fallback_model()
-            if fallback_model and fallback_model != model:
-                try:
-                    response = await fallback_model.ainvoke(prompt)
-                    fallback_name = next(
-                        name for name, m in self._models.items() if m == fallback_model
-                    )
-                    return response.content, fallback_name
-                except Exception as fe:
-                    logger.error(f"Fallback 모델 응답 생성 중 오류: {fe}")
             
-            raise e
+            # Mock 모드로 fallback
+            logger.warning(f"실제 API 호출 실패, Mock 응답으로 대체: {e}")
+            mock_model_name = f"mock-{model_name.lower()}-fallback"
+            response = mock_llm.generate_response(
+                prompt, 
+                f"{mock_model_name} (API 오류로 인한 Mock 응답)"
+            )
+            return response, mock_model_name
+
+    async def stream_response(
+        self,
+        model_name: str,
+        prompt: str,
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        """
+        스트리밍 응답 생성
+        
+        Args:
+            model_name: 사용할 모델 이름
+            prompt: 프롬프트
+            **kwargs: 추가 파라미터
+            
+        Yields:
+            응답 텍스트 청크
+        """
+        # Mock 모드 확인
+        if self.is_mock_mode():
+            logger.info(f"Mock 스트리밍 응답 생성 - 요청된 모델: {model_name}")
+            mock_model_name = f"mock-{model_name.lower()}"
+            async for chunk in mock_llm.stream_response(prompt, mock_model_name):
+                yield chunk
+            return
+        
+        model = self.get_model(model_name)
+        if model is None:
+            # Mock으로 fallback
+            async for chunk in mock_llm.stream_response(prompt, f"mock-{model_name}-unavailable"):
+                yield chunk
+            return
+        
+        try:
+            # 실제 스트리밍 (LangChain 모델이 스트리밍을 지원하는 경우)
+            if hasattr(model, 'astream'):
+                async for chunk in model.astream(prompt):
+                    if hasattr(chunk, 'content'):
+                        yield chunk.content
+                    else:
+                        yield str(chunk)
+            else:
+                # 스트리밍을 지원하지 않는 경우 일반 응답을 청크로 나누어 전송
+                response = await model.ainvoke(prompt)
+                content = response.content
+                
+                # 단어별로 스트리밍 시뮬레이션
+                import asyncio
+                words = content.split()
+                for i, word in enumerate(words):
+                    chunk = word + (" " if i < len(words) - 1 else "")
+                    yield chunk
+                    await asyncio.sleep(0.03)  # 스트리밍 딜레이
+                    
+        except Exception as e:
+            logger.error(f"스트리밍 응답 생성 중 오류: {e}")
+            # Mock 스트리밍으로 fallback
+            async for chunk in mock_llm.stream_response(
+                prompt, 
+                f"mock-{model_name}-error-fallback"
+            ):
+                yield chunk
 
 
 # 싱글톤 인스턴스
