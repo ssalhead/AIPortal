@@ -1,108 +1,552 @@
-# AI 포탈 개발 명세서
+# 차세대 AI 포탈 개발 명세서
+## SYGenai 검증 패턴 기반 통합 시스템
 
 ## 1. 프로젝트 개요
 
 ### 프로젝트명
-차세대 지능형 내부 자동화 플랫폼 (AI 포탈)
+차세대 지능형 내부 자동화 플랫폼 (Next-Gen AI Portal)
 
 ### 프로젝트 목표
-회사 내부 사용자를 위한 통합 AI 솔루션 개발. 단순한 도구를 넘어, 다양한 AI 에이전트 서비스를 제공하고, 사용자가 직접 에이전트를 생성하며, 데이터와 상호작용하는 확장 가능한 생태계를 구축
+**기존 SYGenai의 검증된 엔터프라이즈급 아키텍처**를 기반으로, 혁신적인 **인터랙티브 워크스페이스**와 **확장 가능한 AI 에이전트 생태계**를 구축하여, 사용자가 AI와 협업하여 실질적인 결과물을 생성하는 차세대 플랫폼을 개발
 
-### 개발 철학 - Vibe Coding
-- 엄격한 명세보다 아키텍처 원칙과 핵심 기능의 "Vibe"를 이해하고 최적의 코드를 창의적으로 구현
-- 각 단계별로 핵심 기능을 구현하고 피드백을 통해 반복적으로 개선
-- 애자일 접근 방식을 통한 점진적 시스템 완성
+### 핵심 가치 제안
+1. **검증된 안정성**: 운영 중인 SYGenai의 성숙한 아키텍처 패턴 활용
+2. **혁신적 경험**: Canvas/Artifacts 스타일 인터랙티브 워크스페이스
+3. **확장 가능성**: 모듈화된 에이전트 시스템으로 무한 확장
+4. **엔터프라이즈 레디**: 보안, 성능, 확장성이 검증된 프로덕션 아키텍처
 
-## 2. 핵심 아키텍처
+### 개발 철학 - 검증된 혁신 (Proven Innovation)
+- **기존 검증 패턴 최대 활용**: SYGenai의 안정적 아키텍처 패턴 재사용
+- **점진적 혁신 도입**: 안정적 기반 위에 새로운 기능을 단계별로 추가
+- **품질 우선**: 검증된 코드 품질과 보안 수준 유지
+- **사용자 중심**: 실제 사용 패턴을 기반으로 한 UI/UX 개선
 
-### 2.1 분리형 아키텍처 (Decoupled Architecture)
-- **프론트엔드**: React 기반 단일 페이지 애플리케이션(SPA)
-- **백엔드**: Python 기반 API 서버
-- **통신**: RESTful API를 통한 통신, 독립적 개발/배포/확장 가능
+## 2. 통합 시스템 아키텍처
 
-### 2.2 기술 스택
-#### 프론트엔드
-- React 18+
-- TypeScript
-- Vite (빌드 도구)
-- React Query (상태 관리)
-- Tailwind CSS 또는 Material-UI
-- Monaco Editor (코드 편집기)
-
-#### 백엔드
-- Python 3.11+
-- FastAPI
-- LangChain / LangGraph
-- SQLAlchemy
-- Pydantic
-
-#### AI 에이전트 프레임워크
-- LangChain & LangGraph
-- Supervisor-Worker 패턴
-
-## 3. 백엔드 개발 명세
-
-### 3.1 AI 에이전트 서비스 (LangGraph 기반)
-
-#### 아키텍처 패턴
-- **Supervisor-Worker 패턴**: 중앙 Supervisor 에이전트가 사용자 요청을 분석하고 전문화된 Worker 에이전트에게 분배
-
-#### LLM 모델 라우터
-- GCP Gemini 모델군과 AWS Bedrock Claude 모델군 간 동적 선택
-- 사용자 요청 유형 또는 명시적 선택에 따른 최적 모델 라우팅
-
-#### 핵심 Worker 에이전트
-1. **Deep Research Agent**
-   - 특정 주제에 대한 심층 웹 리서치
-   - 구조화된 보고서 생성
-   
-2. **Web Search Agent**
-   - 빠른 웹 검색 수행
-   - 간단한 정보 조회
-   
-3. **Multimodal RAG Agent**
-   - PDF 등 첨부 파일 내용 이해
-   - 이미지 분석 및 답변 생성
-   - 하이브리드 검색 (키워드 + 시맨틱)
-
-### 3.2 데이터 영속성
-
-#### 벡터 저장소
-- **AWS OpenSearch** 사용
-- RAG를 위한 벡터 인덱스 관리
-- 하이브리드 검색 구현 (키워드 + 시맨틱 검색)
-
-#### 관계형 데이터베이스
-- **AWS PostgreSQL** 사용
-- 저장 데이터:
-  - 사용자 정보 및 권한
-  - 에이전트 설정
-  - 커뮤니티 게시물
-  - 구조화된 메타데이터
-
-#### NoSQL 데이터베이스
-- **AWS DynamoDB** 사용
-- 저장 데이터:
-  - 대화 기록
-  - 에이전트 실시간 상태
-  - 비정형 고용량 데이터
-
-### 3.3 API 설계
-
-#### 주요 엔드포인트
+### 2.1 하이브리드 아키텍처 (SYGenai + Innovation)
 ```
-POST   /api/v1/chat          # 채팅 메시지 전송
-GET    /api/v1/agents         # 사용 가능한 에이전트 목록
-POST   /api/v1/agents/execute # 특정 에이전트 실행
-POST   /api/v1/files/upload   # 파일 업로드
-GET    /api/v1/workspace/{id} # 워크스페이스 조회
-PUT    /api/v1/workspace/{id} # 워크스페이스 업데이트
+┌─────────────────────────────────────────────────────────────────┐
+│  React UI (기존 채팅 + 새로운 워크스페이스)                        │
+├─────────────────────────────────────────────────────────────────┤
+│  FastAPI Gateway (SYGenai 검증 미들웨어 + 새로운 워크스페이스 API)  │
+├─────────────────────┬───────────────────┬───────────────────────┤
+│  AI Agent Service   │  MCP Bridge       │  Workspace Service    │
+│  (LangChain 체인)   │  (검증된 프로토콜)  │  (새로운 협업 엔진)     │
+├─────────────────────┼───────────────────┼───────────────────────┤
+│  Vector Store       │  Cache Layer      │  Artifact Store       │
+│  (OpenSearch)       │  (Redis)          │  (S3 + PostgreSQL)    │
+└─────────────────────┴───────────────────┴───────────────────────┘
 ```
 
-#### WebSocket 엔드포인트
+### 2.2 레이어별 기술 스택
+#### 프론트엔드 (검증된 스택 + 새로운 도구)
+- **React 18+** + TypeScript (SYGenai 검증)
+- **Vite** (빌드 최적화)
+- **Zustand** + SWR (상태 관리, SYGenai 패턴)
+- **TailwindCSS** (일관된 디자인 시스템)
+- **Monaco Editor** (코드 편집, 새로운 기능)
+- **React Beautiful DnD** (인터랙티브 UI)
+- **Lucide React** (아이콘 시스템)
+
+#### 백엔드 (SYGenai 검증 스택 확장)
+- **Python 3.11+**
+- **FastAPI** (SYGenai 검증 미들웨어 포함)
+- **LangChain 0.3+ / LangGraph** (기존 체인 + 새로운 Supervisor)
+- **SQLAlchemy** + Alembic (데이터 모델링)
+- **Pydantic** (타입 안전성)
+- **Anthropic SDK** + **Google GenAI** (멀티 모델)
+
+#### AI 에이전트 시스템 (하이브리드 접근)
+- **기존 검증 에이전트**: 회계, 법무, 세무, 인사 (SYGenai 체인)
+- **새로운 범용 에이전트**: Web Search, Deep Research, RAG (Supervisor-Worker)
+- **통합 라우터**: 의도 분석 기반 에이전트 선택
+
+## 3. AI 에이전트 생태계 설계
+
+### 3.1 통합 에이전트 아키텍처
+
+#### 하이브리드 패턴 (검증 + 혁신)
+```python
+class UnifiedAgentSystem:
+    def __init__(self):
+        # 기존 검증된 도메인 에이전트 (SYGenai 패턴)
+        self.domain_agents = {
+            'hr_manager': HRManagerAgent(),      # MCP 프로토콜 기반
+            'accounting': AccountingAgent(),     # OpenSearch 체인
+            'legal': LegalAgent(),              # Google Gemini 최적화
+            'tax': TaxAgent(),                  # 세무 전문 체인
+        }
+        
+        # 새로운 범용 에이전트 (Supervisor-Worker)
+        self.universal_agents = {
+            'web_search': WebSearchAgent(),
+            'deep_research': DeepResearchAgent(),
+            'multimodal_rag': MultimodalRAGAgent(),
+            'code_assistant': CodeAssistantAgent(),
+        }
+        
+        self.supervisor = HybridSupervisor()  # 통합 의도 분석
+        self.llm_router = EnhancedLLMRouter()  # 멀티 모델 라우팅
 ```
-WS     /ws/chat              # 실시간 채팅 스트리밍
-WS     /ws/workspace/{id}    # 워크스페이스 실시간 협업
+
+#### 최적화된 LLM 라우팅 전략 (사용자 지정 모델 한정)
+**지원 모델 목록**:
+- **Claude 4.0 Sonnet** (AWS Bedrock): 최고 성능 복잡한 추론 및 분석
+- **Claude 3.7 Sonnet** (AWS Bedrock): 균형잡힌 성능의 범용 작업
+- **Claude 3.5 Haiku** (AWS Bedrock): 빠른 응답이 필요한 간단한 작업
+- **Gemini 2.5 Pro** (GCP GenerativeAI): 대용량 컨텍스트 처리 및 멀티모달
+- **Gemini 2.5 Flash** (GCP GenerativeAI): 빠른 추론 및 실시간 처리
+- **Gemini 2.0 Flash** (GCP GenerativeAI): 차세대 고속 처리
+
+**라우팅 전략**:
+```python
+class OptimizedLLMRouter:
+    def __init__(self):
+        self.claude_client = BedrockClient()  # AWS Bedrock
+        self.gemini_client = GenerativeAIClient()  # GCP GenerativeAI
+        
+    def route_request(self, task_type: str, context_length: int) -> str:
+        # 작업 유형별 최적 모델 선택
+        if task_type == "complex_analysis":
+            return "claude-4.0-sonnet"
+        elif task_type == "balanced_reasoning":
+            return "claude-3.7-sonnet"
+        elif task_type == "quick_response":
+            return "claude-3.5-haiku" if context_length < 4000 else "gemini-2.0-flash"
+        elif task_type == "multimodal":
+            return "gemini-2.5-pro"
+        elif context_length > 100000:
+            return "gemini-2.5-pro"  # 대용량 컨텍스트
+        else:
+            return "gemini-2.5-flash"  # 기본 고속 처리
+```
+
+#### 에이전트 분류 및 역할
+
+**1. Tier1 도메인 전문 에이전트** (관리자 설정 가능한 MCP 기반)
+- **Regulations Agent**: 규정 해석 및 컴플라이언스 지원
+- **Legal Agent**: 법무 자문 및 계약 검토
+- **Accounting Agent**: 회계 처리 및 재무 분석
+- **Tax Agent**: 세무 신고 및 세법 해석
+
+**MCP 설정 시스템**:
+```python
+class Tier1AgentMCPConfig:
+    def __init__(self):
+        self.config_store = PostgreSQLConfigStore()
+    
+    async def get_agent_config(self, agent_type: str, user_id: str) -> Dict:
+        # 관리자가 설정한 MCP 서버 정보 조회
+        base_config = await self.config_store.get_base_config(agent_type)
+        user_permissions = await self.config_store.get_user_permissions(user_id, agent_type)
+        
+        return {
+            "mcp_server_url": base_config["server_url"],
+            "available_tools": user_permissions["allowed_tools"],
+            "data_sources": user_permissions["accessible_sources"],
+            "output_format": base_config["default_format"]
+        }
+    
+    async def update_agent_config(self, agent_type: str, config: Dict, admin_user: str):
+        # 관리자 권한 확인 후 MCP 설정 업데이트
+        if not await self.verify_admin_permissions(admin_user, agent_type):
+            raise PermissionError("Admin access required")
+        
+        await self.config_store.update_config(agent_type, config)
+```
+
+**2. 새미 GPT (범용 AI 에이전트)** - 사용자 토글 기능 제공
+
+**핵심 기능** (사용자가 개별 토글 가능):
+- **Deep Research** 🔬: 다단계 심화 연구 및 구조화된 보고서 생성
+- **Web Search** 🌐: 실시간 웹 검색 및 최신 정보 통합
+- **Canvas Mode** 🎨: 인터랙티브 워크스페이스 및 협업 도구
+
+**토글 시스템 설계**:
+```python
+class SamiGPTFeatureManager:
+    def __init__(self):
+        self.user_preferences = UserPreferenceStore()
+    
+    async def get_user_features(self, user_id: str) -> Dict[str, bool]:
+        preferences = await self.user_preferences.get(user_id)
+        return {
+            "deep_research": preferences.get("enable_deep_research", True),
+            "web_search": preferences.get("enable_web_search", True),
+            "canvas_mode": preferences.get("enable_canvas_mode", True)
+        }
+    
+    async def toggle_feature(self, user_id: str, feature: str, enabled: bool):
+        await self.user_preferences.update(user_id, {f"enable_{feature}": enabled})
+        
+    async def create_agent_chain(self, user_id: str, request_type: str):
+        features = await self.get_user_features(user_id)
+        
+        # 활성화된 기능에 따라 동적 체인 구성
+        chain_components = []
+        if features["deep_research"] and request_type == "research":
+            chain_components.append(DeepResearchAgent())
+        if features["web_search"] and request_type in ["search", "current_info"]:
+            chain_components.append(WebSearchAgent())
+        if features["canvas_mode"] and request_type == "collaborative":
+            chain_components.append(CanvasAgent())
+            
+        return SupervisorAgent(components=chain_components)
+```
+
+### 3.2 최적화된 데이터 아키텍처
+
+#### Redis 대체 최적화된 데이터 전략
+
+**Redis 제약으로 인한 대체 솔루션**:
+```
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Hot Data      │   Warm Data     │   Cold Data     │
+│   (실시간)       │   (세션)         │   (장기보관)     │
+├─────────────────┼─────────────────┼─────────────────┤
+│ PostgreSQL +    │ DynamoDB        │ PostgreSQL      │
+│ Connection Pool │ - 대화 기록      │ - 사용자 정보    │
+│ - 채팅 상태      │ - 에이전트 상태   │ - 워크스페이스   │
+│ - 세션 캐시      │ - 임시 파일      │ - 권한 관리      │
+│ - 실시간 협업    │ - 워크플로우 상태 │ - 설정 정보      │
+└─────────────────┴─────────────────┴─────────────────┘
+```
+
+**Redis 대체 구현 전략**:
+```python
+class OptimizedCacheManager:
+    """Redis 없이 PostgreSQL 기반 고성능 캐싱"""
+    
+    def __init__(self):
+        # 연결 풀 최적화 - SYGenai 패턴 활용
+        self.pg_pool = ConnectionPoolManager(
+            min_connections=20,
+            max_connections=100,
+            connection_timeout=5.0
+        )
+        
+        # 인메모리 L1 캐시 (애플리케이션 레벨)
+        self.memory_cache = TTLCache(maxsize=10000, ttl=300)  # 5분 TTL
+        
+    async def get_cached_data(self, key: str) -> Optional[Any]:
+        # L1: 메모리 캐시 확인
+        if key in self.memory_cache:
+            return self.memory_cache[key]
+            
+        # L2: PostgreSQL 캐시 테이블 확인
+        async with self.pg_pool.acquire() as conn:
+            result = await conn.fetchrow(
+                "SELECT data FROM cache_table WHERE key = $1 AND expires_at > NOW()",
+                key
+            )
+            if result:
+                data = json.loads(result['data'])
+                self.memory_cache[key] = data  # L1 캐시에 저장
+                return data
+        
+        return None
+    
+    async def set_cached_data(self, key: str, data: Any, ttl: int = 300):
+        # L1: 메모리 캐시 저장
+        self.memory_cache[key] = data
+        
+        # L2: PostgreSQL 영속 저장
+        expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+        async with self.pg_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO cache_table (key, data, expires_at) "
+                "VALUES ($1, $2, $3) "
+                "ON CONFLICT (key) DO UPDATE SET data = $2, expires_at = $3",
+                key, json.dumps(data), expires_at
+            )
+
+# 실시간 협업을 위한 WebSocket 상태 관리
+class WebSocketStateManager:
+    def __init__(self, cache_manager: OptimizedCacheManager):
+        self.cache = cache_manager
+        self.active_connections: Dict[str, Set[WebSocket]] = defaultdict(set)
+    
+    async def join_workspace(self, workspace_id: str, websocket: WebSocket, user_id: str):
+        self.active_connections[workspace_id].add(websocket)
+        
+        # 사용자 상태를 캐시에 저장 (Redis 대체)
+        await self.cache.set_cached_data(
+            f"ws_user:{workspace_id}:{user_id}",
+            {"status": "active", "joined_at": time.time()},
+            ttl=3600
+        )
+    
+    async def broadcast_to_workspace(self, workspace_id: str, message: Dict):
+        connections = self.active_connections.get(workspace_id, set())
+        for websocket in connections.copy():
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                connections.discard(websocket)
+```
+
+#### 벡터 저장소 (검증된 OpenSearch 활용)
+- **AWS OpenSearch** (SYGenai 검증 구성)
+- **하이브리드 검색**: BM25 + 시맨틱 유사도 (검증된 알고리즘)
+- **도메인별 인덱스**: 회계, 법무, 세무, 일반 지식 분리
+- **실시간 임베딩**: Sentence Transformers 최적화
+
+#### 관계형 데이터베이스 (PostgreSQL) - 통합 스키마
+
+**핵심 스키마 설계**:
+```sql
+-- 사용자 및 인증 (SYGenai 호환 확장)
+CREATE TABLE users (
+    empno VARCHAR(20) PRIMARY KEY,
+    name_ko VARCHAR(100) NOT NULL,
+    company VARCHAR(100),
+    company_code VARCHAR(10),
+    roles JSONB DEFAULT '[]',
+    permissions JSONB DEFAULT '{}',
+    profile_data JSONB DEFAULT '{}',  -- 자동 수집된 프로파일
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 캐시 테이블 (Redis 대체)
+CREATE TABLE cache_table (
+    key VARCHAR(255) PRIMARY KEY,
+    data JSONB NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_cache_expires ON cache_table(expires_at);
+
+-- 워크스페이스 및 협업
+CREATE TABLE workspaces (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_empno VARCHAR(20) REFERENCES users(empno),
+    title VARCHAR(200) NOT NULL,
+    settings JSONB DEFAULT '{}',
+    collaborators JSONB DEFAULT '[]',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 아티팩트 (워크스페이스 결과물)
+CREATE TABLE artifacts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID REFERENCES workspaces(id),
+    type VARCHAR(50) NOT NULL,  -- 'document', 'code', 'chart', etc.
+    title VARCHAR(200),
+    content JSONB NOT NULL,
+    version INTEGER DEFAULT 1,
+    created_by VARCHAR(20) REFERENCES users(empno),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Tier1 에이전트 MCP 설정
+CREATE TABLE agent_mcp_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_type VARCHAR(50) NOT NULL,  -- 'regulations', 'legal', 'accounting', 'tax'
+    config_data JSONB NOT NULL,
+    created_by VARCHAR(20) REFERENCES users(empno),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(agent_type)
+);
+
+-- 사용자별 에이전트 권한
+CREATE TABLE user_agent_permissions (
+    empno VARCHAR(20) REFERENCES users(empno),
+    agent_type VARCHAR(50),
+    permissions JSONB DEFAULT '{}',
+    granted_by VARCHAR(20) REFERENCES users(empno),
+    granted_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (empno, agent_type)
+);
+
+-- 새미 GPT 기능 설정
+CREATE TABLE user_feature_preferences (
+    empno VARCHAR(20) PRIMARY KEY REFERENCES users(empno),
+    enable_deep_research BOOLEAN DEFAULT true,
+    enable_web_search BOOLEAN DEFAULT true,
+    enable_canvas_mode BOOLEAN DEFAULT true,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 사용자 프로파일 자동 수집 로그
+CREATE TABLE profile_collection_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empno VARCHAR(20) REFERENCES users(empno),
+    data_source VARCHAR(100),  -- 'chat_interaction', 'file_upload', 'workspace_activity'
+    collected_data JSONB,
+    confidence_score FLOAT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 활동 로그 (협업 추적)
+CREATE TABLE activity_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    empno VARCHAR(20) REFERENCES users(empno),
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50),
+    resource_id UUID,
+    metadata JSONB DEFAULT '{}',
+    timestamp TIMESTAMP DEFAULT NOW()
+);
+
+-- 성능 최적화 인덱스
+CREATE INDEX idx_workspaces_owner ON workspaces(owner_empno);
+CREATE INDEX idx_artifacts_workspace ON artifacts(workspace_id);
+CREATE INDEX idx_artifacts_created_by ON artifacts(created_by);
+CREATE INDEX idx_activity_logs_user ON activity_logs(empno, timestamp);
+CREATE INDEX idx_profile_logs_user ON profile_collection_logs(empno, created_at);
+```
+
+**사용자 프로파일 자동 수집 시스템**:
+```python
+class UserProfileCollector:
+    """사용자 상호작용을 통한 자동 프로파일 수집"""
+    
+    def __init__(self, db_pool, cache_manager):
+        self.db = db_pool
+        self.cache = cache_manager
+        self.ml_analyzer = ProfileMLAnalyzer()
+    
+    async def collect_from_chat(self, empno: str, message: str, response: str):
+        """채팅 상호작용에서 프로파일 정보 추출"""
+        # ML 기반 의도 및 선호도 분석
+        analysis = await self.ml_analyzer.analyze_interaction(message, response)
+        
+        if analysis['confidence'] > 0.7:
+            await self.store_profile_data(empno, 'chat_interaction', analysis)
+    
+    async def collect_from_file_upload(self, empno: str, file_metadata: Dict):
+        """파일 업로드 패턴에서 업무 도메인 추출"""
+        domain_hints = {
+            'xlsx': 'accounting',
+            'pdf': 'legal_documents',
+            'py': 'development',
+            'sql': 'data_analysis'
+        }
+        
+        file_ext = file_metadata.get('extension', '').lower()
+        if file_ext in domain_hints:
+            profile_data = {
+                'work_domain': domain_hints[file_ext],
+                'technical_level': 'advanced' if file_ext in ['py', 'sql'] else 'basic'
+            }
+            
+            await self.store_profile_data(empno, 'file_upload', profile_data)
+    
+    async def collect_from_workspace_activity(self, empno: str, activity_type: str, details: Dict):
+        """워크스페이스 활동에서 협업 패턴 추출"""
+        collaboration_patterns = await self.ml_analyzer.analyze_collaboration(activity_type, details)
+        
+        if collaboration_patterns:
+            await self.store_profile_data(empno, 'workspace_activity', collaboration_patterns)
+    
+    async def store_profile_data(self, empno: str, source: str, data: Dict):
+        """프로파일 데이터 저장 및 사용자 프로파일 업데이트"""
+        confidence = data.pop('confidence', 0.8)
+        
+        # 수집 로그 저장
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO profile_collection_logs (empno, data_source, collected_data, confidence_score) "
+                "VALUES ($1, $2, $3, $4)",
+                empno, source, json.dumps(data), confidence
+            )
+        
+        # 사용자 프로파일 업데이트 (높은 신뢰도만)
+        if confidence > 0.8:
+            await self.update_user_profile(empno, data)
+    
+    async def update_user_profile(self, empno: str, new_data: Dict):
+        """누적된 데이터로 사용자 프로파일 업데이트"""
+        async with self.db.acquire() as conn:
+            # 기존 프로파일 조회
+            current = await conn.fetchrow(
+                "SELECT profile_data FROM users WHERE empno = $1", empno
+            )
+            
+            if current and current['profile_data']:
+                profile = dict(current['profile_data'])
+            else:
+                profile = {}
+            
+            # 새로운 데이터 병합 (가중 평균 적용)
+            profile = self._merge_profile_data(profile, new_data)
+            
+            # 프로파일 업데이트
+            await conn.execute(
+                "UPDATE users SET profile_data = $1, updated_at = NOW() WHERE empno = $2",
+                json.dumps(profile), empno
+            )
+            
+            # 캐시 무효화
+            await self.cache.invalidate_key(f"user_profile:{empno}")
+    
+    def _merge_profile_data(self, existing: Dict, new: Dict) -> Dict:
+        """가중 평균을 사용한 프로파일 데이터 병합"""
+        # 구현 로직: 빈도, 최신성, 신뢰도 기반 가중치 적용
+        merged = existing.copy()
+        
+        for key, value in new.items():
+            if key in merged:
+                # 기존 값과 새 값의 가중 평균 계산
+                if isinstance(value, (int, float)):
+                    merged[key] = (merged[key] * 0.7 + value * 0.3)
+                elif isinstance(value, str):
+                    # 문자열은 최신 값 우선 또는 빈도 기반 선택
+                    merged[key] = value  # 단순화
+            else:
+                merged[key] = value
+        
+        merged['last_updated'] = datetime.utcnow().isoformat()
+        return merged
+```
+
+#### NoSQL 데이터베이스 (DynamoDB 최적화)
+- **대화 기록**: 세션별 파티셔닝으로 성능 최적화
+- **에이전트 상태**: 실행 컨텍스트 및 중간 결과 저장
+- **파일 메타데이터**: S3 객체와 연결된 처리 상태
+- **실시간 협업**: WebSocket 세션 상태 관리
+
+### 3.3 통합 API 설계
+
+#### 핵심 API 구조 (SYGenai 패턴 확장)
+```
+# 채팅 및 에이전트 API (검증된 패턴)
+POST   /api/v1/chat                    # 통합 채팅 (기존 + 새로운)
+GET    /api/v1/agents                  # 에이전트 목록 (도메인 + 범용)
+POST   /api/v1/agents/{type}/execute   # 에이전트 실행
+
+# 파일 및 RAG API
+POST   /api/v1/files/upload            # 멀티파트 업로드
+GET    /api/v1/files/{id}/process      # 처리 상태 확인
+POST   /api/v1/rag/search             # 하이브리드 검색
+
+# 워크스페이스 API (새로운 기능)
+GET    /api/v1/workspaces              # 워크스페이스 목록
+POST   /api/v1/workspaces              # 새 워크스페이스 생성
+GET    /api/v1/workspaces/{id}         # 워크스페이스 조회
+PUT    /api/v1/workspaces/{id}         # 워크스페이스 수정
+
+# 아티팩트 관리 API
+GET    /api/v1/workspaces/{id}/artifacts     # 아티팩트 목록
+POST   /api/v1/workspaces/{id}/artifacts     # 아티팩트 생성
+PUT    /api/v1/workspaces/{id}/artifacts/{aid} # 아티팩트 수정
+
+# MCP 통합 API (기존 패턴)
+GET    /api/v1/mcp/servers             # MCP 서버 목록
+POST   /api/v1/mcp/tools/call          # MCP 도구 호출
+```
+
+#### WebSocket 엔드포인트 (검증된 스트리밍)
+```
+# 채팅 스트리밍 (SYGenai 검증 프로토콜)
+WS     /ws/chat/{conversation_id}      # 실시간 채팅 및 에이전트 응답
+
+# 워크스페이스 협업 (새로운 실시간 기능)
+WS     /ws/workspace/{id}              # 실시간 협업 및 동시 편집
+WS     /ws/workspace/{id}/cursor       # 커서 및 선택 영역 동기화
 ```
 
 ## 4. 프론트엔드 개발 명세
@@ -229,18 +673,64 @@ src/
 - 에러 추적 및 알림
 - 사용자 경험 메트릭
 
-### 6.3 배포 환경
+### 6.3 클라우드 네이티브 배포 전략
 
-#### 컨테이너화
-- Docker 이미지 빌드
-- docker-compose 개발 환경
-- Kubernetes 프로덕션 배포 준비
+#### 컨테이너 퍼스트 전략
+```yaml
+# Docker 멀티스테이지 빌드 최적화
+FROM node:18-alpine AS frontend-build
+# React 빌드 최적화 레이어
 
-#### CI/CD
-- GitHub Actions 워크플로우
-- 자동화된 테스트
-- 스테이징 환경 배포
-- 블루-그린 배포 전략
+FROM python:3.11-slim AS backend-build  
+# FastAPI + AI 라이브러리 최적화
+
+FROM nginx:alpine AS production
+# 프로덕션 웹서버 및 리버스 프록시
+```
+
+#### 마이크로서비스 전환 준비
+- **API Gateway**: FastAPI 기반 마이크로서비스 라우팅
+- **서비스 분리**: 채팅, 워크스페이스, 에이전트, 파일처리 서비스
+- **데이터베이스 샤드**: 사용자별, 도메인별 데이터 분리
+- **로드 밸런싱**: 에이전트별 동적 스케일링
+
+#### 인프라 자동화 (IaC)
+```yaml
+# Kubernetes 배포 전략
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-portal
+spec:
+  replicas: 3  # HA 구성
+  strategy:
+    type: RollingUpdate  # 무중단 배포
+  template:
+    spec:
+      containers:
+      - name: frontend
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi" 
+            cpu: "500m"
+      - name: backend
+        resources:
+          requests:
+            memory: "2Gi"    # AI 라이브러리
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+```
+
+#### GitOps 기반 CI/CD
+- **GitHub Actions**: 다단계 빌드 및 테스트 자동화
+- **ArgoCD**: Kubernetes 배포 자동화 및 상태 관리
+- **카나리 배포**: A/B 테스트 및 점진적 롤아웃
+- **자동 롤백**: 성능 임계치 초과 시 자동 이전 버전 복구
 
 ## 7. 보안 및 규정 준수
 
@@ -303,3 +793,70 @@ src/
 - 통합 테스트 자동화
 - 코드 리뷰 필수
 - 지속적 리팩토링
+
+## 10. 기술적 혁신 요소
+
+### 10.1 AI 에이전트 협업 패턴
+- **멀티 에이전트 체인**: LangGraph 기반 복잡한 워크플로우
+- **컨텍스트 전파**: 에이전트 간 정보 공유 최적화
+- **동적 모델 선택**: 작업 유형별 최적 LLM 자동 선택
+- **실시간 피드백**: 사용자 상호작용 기반 에이전트 성능 개선
+
+### 10.2 멀티모달 정보 처리
+- **통합 파일 처리**: 텍스트, 이미지, 코드, 구조화 데이터 동시 지원
+- **지능형 컨텍스트 추출**: 파일 내용 기반 자동 태깅 및 분류
+- **크로스 모달 검색**: 텍스트 질의로 이미지 검색, 이미지로 관련 문서 찾기
+- **RAG 최적화**: 문서 청킹 전략 및 벡터 임베딩 개선
+
+### 10.3 사용자 경험 혁신
+- **인텐트 예측**: 사용자 입력 분석을 통한 의도 선제적 파악
+- **컨텍스트 인식**: 이전 대화 및 워크스페이스 상태 기반 개인화
+- **협업 인텔리전스**: 팀 워크플로우 패턴 학습 및 제안
+- **프로그레시브 디스클로저**: 사용자 숙련도에 따른 적응적 인터페이스
+
+## 11. 경쟁 우위 및 차별화 포인트
+
+### 11.1 SYGenai 기반 안정성
+- **검증된 엔터프라이즈 패턴**: 운영 환경에서 검증된 아키텍처
+- **높은 신뢰성**: 기존 시스템의 99.9% 가용성 수준 유지
+- **보안 강화**: 실제 업무 환경에서 검증된 보안 프레임워크
+- **확장성 보장**: 대규모 사용자 환경에서의 성능 검증 완료
+
+### 11.2 혁신적 기술 조합
+- **하이브리드 에이전트**: 도메인 전문성 + 범용 AI의 최적 결합
+- **Dynamic LLM 라우팅**: 작업별 최적 모델 자동 선택으로 성능/비용 최적화
+- **Redis-less 아키텍처**: PostgreSQL 기반 고성능 캐싱으로 인프라 단순화
+- **MCP 통합**: 표준 프로토콜 기반 에이전트 확장성
+
+### 11.3 사용자 중심 설계
+- **직관적 워크플로우**: 채팅에서 워크스페이스로의 자연스러운 전환
+- **개인화 AI**: 자동 프로파일 수집을 통한 맞춤형 서비스
+- **협업 중심**: 실시간 동시 편집 및 공유 기능
+- **진입 장벽 최소화**: 별도 학습 없이 즉시 사용 가능한 인터페이스
+
+## 12. 로드맵 및 확장 계획
+
+### 12.1 단기 목표 (1-3개월)
+- **MVP 완성**: Web Search + 기본 워크스페이스
+- **사용자 피드백 수집**: 핵심 사용 패턴 분석
+- **성능 최적화**: 응답 시간 및 안정성 개선
+- **보안 강화**: 엔터프라이즈 보안 요구사항 충족
+
+### 12.2 중기 목표 (3-6개월)
+- **에이전트 생태계 확장**: 새로운 도메인 전문 에이전트 추가
+- **고급 협업 기능**: 버전 관리, 승인 워크플로우, 템플릿 시스템
+- **AI 성능 고도화**: 파인튜닝 및 커스텀 모델 통합
+- **모바일 지원**: 반응형 웹 및 PWA 기능
+
+### 12.3 장기 비전 (6-12개월)
+- **AI 플랫폼 생태계**: 서드파티 에이전트 및 플러그인 지원
+- **오픈소스 기여**: 핵심 컴포넌트의 커뮤니티 공개
+- **글로벌 확장**: 다국어 지원 및 지역별 컴플라이언스
+- **차세대 AI 기술**: 멀티모달 AI, 로보틱스 연동 등 실험적 기능
+
+---
+
+**문서 버전**: v2.1  
+**최종 업데이트**: 2024-01-06  
+**작성자**: AI 포탈 개발팀  
+**검토자**: SYGenai 아키텍처 팀
