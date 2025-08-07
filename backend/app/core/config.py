@@ -39,13 +39,13 @@ class Settings(BaseSettings):
         raise ValueError(v)
     
     # 데이터베이스 설정
-    DATABASE_URL: Optional[str] = "postgresql+asyncpg://aiportal:aiportal123@localhost:5432/ai_portal"
+    DATABASE_URL: Optional[str] = "postgresql+asyncpg://postgres:voA8NKk3DCQP6gQ6S5jO@10.130.5.114:5432/aiportal"
     REDIS_URL: Optional[str] = "redis://localhost:6379/0"
     
     # AWS 설정
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    AWS_REGION: str = "ap-northeast-2"
+    AWS_REGION: str = "us-west-2"
     
     # DynamoDB 설정
     DYNAMODB_ENDPOINT: Optional[str] = "http://localhost:8000"
@@ -53,10 +53,11 @@ class Settings(BaseSettings):
     
     # OpenSearch 설정
     OPENSEARCH_URL: str = "http://localhost:9200"
+    OPENSEARCH_USERNAME: Optional[str] = None
+    OPENSEARCH_PASSWORD: Optional[str] = None
     OPENSEARCH_INDEX_PREFIX: str = "ai_portal_"
     
-    # LLM API 키
-    OPENAI_API_KEY: Optional[str] = None
+    # LLM API 키 (Claude via AWS Bedrock, Gemini via GCP)
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     

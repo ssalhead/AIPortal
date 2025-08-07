@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { Header } from './Header';
+import { GlobalLoadingOverlay } from '../ui/GlobalLoadingOverlay';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -11,11 +12,12 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-b from-neutral-25 to-neutral-50">
       <Header />
-      <main className="flex-1">
+      <main className="flex-1 relative">
         {children}
       </main>
+      <GlobalLoadingOverlay />
     </div>
   );
 };

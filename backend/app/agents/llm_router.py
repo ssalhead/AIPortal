@@ -3,14 +3,15 @@ LLM 모델 라우터
 """
 
 from typing import Optional, Dict, Any, AsyncGenerator
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
+from langchain_aws import ChatBedrock
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.language_models import BaseLanguageModel
 import logging
+import boto3
 
 from app.core.config import settings
 from app.agents.mock_llm import mock_llm
+from app.services.logging_service import logging_service, log_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -25,41 +26,116 @@ class LLMRouter:
     def _initialize_models(self):
         """사용 가능한 모델들을 초기화"""
         try:
-            # Gemini 모델 초기화
+            # AWS Bedrock Claude 모델 초기화
+            if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+                try:
+                    # Bedrock 클라이언트 생성
+                    bedrock_client = boto3.client(
+                        service_name="bedrock-runtime",
+                        region_name=settings.AWS_REGION,
+                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    )
+                    
+                    # Claude Sonnet 4.0 (최신 모델) - inference profile 사용
+                    self._models["claude-4"] = ChatBedrock(
+                        client=bedrock_client,
+                        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+                        model_kwargs={
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        }
+                    )
+                    logger.info("AWS Bedrock Claude 4.0 Sonnet 모델 초기화 완료")
+                    
+                    # Claude 3.7 Sonnet - inference profile 사용
+                    self._models["claude-3.7"] = ChatBedrock(
+                        client=bedrock_client,
+                        model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+                        model_kwargs={
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        }
+                    )
+                    logger.info("AWS Bedrock Claude 3.7 Sonnet 모델 초기화 완료")
+                    
+                    # Claude 3.5 Sonnet (기본 모델)
+                    self._models["claude"] = ChatBedrock(
+                        client=bedrock_client,
+                        model_id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                        model_kwargs={
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        }
+                    )
+                    logger.info("AWS Bedrock Claude 3.5 Sonnet 모델 초기화 완료")
+                    
+                    # Claude 3.5 Sonnet (별칭 - 명시적 버전)
+                    self._models["claude-3.5"] = ChatBedrock(
+                        client=bedrock_client,
+                        model_id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                        model_kwargs={
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        }
+                    )
+                    logger.info("AWS Bedrock Claude 3.5 Sonnet (별칭) 모델 초기화 완료")
+                    
+                    # Claude 3.5 Haiku (빠른 응답용)
+                    self._models["claude-haiku"] = ChatBedrock(
+                        client=bedrock_client,
+                        model_id="anthropic.claude-3-haiku-20240307-v1:0",
+                        model_kwargs={
+                            "temperature": 0.7,
+                            "max_tokens": 4096,
+                        }
+                    )
+                    logger.info("AWS Bedrock Claude 3.5 Haiku 모델 초기화 완료")
+                    
+                except Exception as e:
+                    logger.error(f"AWS Bedrock 초기화 실패: {e}")
+            else:
+                logger.warning("AWS 인증 정보가 설정되지 않음 - Claude 모델 사용 불가")
+            
+            # GCP Gemini 모델 초기화
             if settings.GOOGLE_API_KEY:
-                self._models["gemini"] = ChatGoogleGenerativeAI(
-                    model="gemini-pro",
-                    google_api_key=settings.GOOGLE_API_KEY,
-                    temperature=0.7,
-                    max_tokens=2048
-                )
-                logger.info("Gemini 모델 초기화 완료")
+                try:
+                    # Gemini Pro 1.5
+                    self._models["gemini-pro"] = ChatGoogleGenerativeAI(
+                        model="gemini-1.5-pro",
+                        google_api_key=settings.GOOGLE_API_KEY,
+                        temperature=0.7,
+                        max_output_tokens=8192,
+                        top_p=0.9,
+                    )
+                    logger.info("Google Gemini 1.5 Pro 모델 초기화 완료")
+                    
+                    # Gemini Flash (더 빠른 응답용)
+                    self._models["gemini-flash"] = ChatGoogleGenerativeAI(
+                        model="gemini-1.5-flash",
+                        google_api_key=settings.GOOGLE_API_KEY,
+                        temperature=0.7,
+                        max_output_tokens=8192,
+                    )
+                    logger.info("Google Gemini 1.5 Flash 모델 초기화 완료")
+                    
+                    # Gemini 1.0 Pro (기본 모델)
+                    self._models["gemini-1.0"] = ChatGoogleGenerativeAI(
+                        model="gemini-1.0-pro",
+                        google_api_key=settings.GOOGLE_API_KEY,
+                        temperature=0.7,
+                        max_output_tokens=8192,
+                    )
+                    logger.info("Google Gemini 1.0 Pro 모델 초기화 완료")
+                    
+                except Exception as e:
+                    logger.error(f"Google Gemini 초기화 실패: {e}")
             else:
                 logger.warning("GOOGLE_API_KEY가 설정되지 않음 - Gemini 모델 사용 불가")
-            
-            # Claude 모델 초기화
-            if settings.ANTHROPIC_API_KEY:
-                self._models["claude"] = ChatAnthropic(
-                    model="claude-3-sonnet-20240229",
-                    anthropic_api_key=settings.ANTHROPIC_API_KEY,
-                    temperature=0.7,
-                    max_tokens=2048
-                )
-                logger.info("Claude 모델 초기화 완료")
-            else:
-                logger.warning("ANTHROPIC_API_KEY가 설정되지 않음 - Claude 모델 사용 불가")
-            
-            # OpenAI 모델 초기화 (fallback)
-            if settings.OPENAI_API_KEY:
-                self._models["openai"] = ChatOpenAI(
-                    model="gpt-3.5-turbo",
-                    openai_api_key=settings.OPENAI_API_KEY,
-                    temperature=0.7,
-                    max_tokens=2048
-                )
-                logger.info("OpenAI 모델 초기화 완료")
-            else:
-                logger.warning("OPENAI_API_KEY가 설정되지 않음 - OpenAI 모델 사용 불가")
                 
         except Exception as e:
             logger.error(f"모델 초기화 중 오류 발생: {e}")
@@ -69,7 +145,7 @@ class LLMRouter:
         지정된 모델 반환
         
         Args:
-            model_name: 모델 이름 (gemini, claude, openai)
+            model_name: 모델 이름 (claude, claude-haiku, gemini, gemini-flash)
             
         Returns:
             언어 모델 인스턴스 또는 None
@@ -88,8 +164,8 @@ class LLMRouter:
         Returns:
             언어 모델 인스턴스 또는 None
         """
-        # 우선순위: gemini > claude > openai
-        for model_name in ["gemini", "claude", "openai"]:
+        # 우선순위: claude-4 > claude-3.7 > claude-3.5 > claude > gemini-pro > claude-haiku > gemini-flash > gemini-1.0
+        for model_name in ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "claude-haiku", "gemini-flash", "gemini-1.0"]:
             if model_name in self._models:
                 logger.info(f"Fallback 모델로 {model_name} 사용")
                 return self._models[model_name]
@@ -118,17 +194,59 @@ class LLMRouter:
         """
         return model_name.lower() in self._models
 
+    def get_optimal_model(self, task_type: str = "general", context_length: int = 0) -> str:
+        """
+        작업 유형에 따른 최적 모델 선택
+        
+        Args:
+            task_type: 작업 유형 (general, reasoning, speed, creative, coding)
+            context_length: 컨텍스트 길이
+            
+        Returns:
+            최적 모델 이름
+        """
+        available_models = self.get_available_models()
+        
+        if not available_models:
+            return "mock-general"
+        
+        # 작업 유형별 모델 우선순위 (Claude 4.0 > 3.7 > 3.5 > Gemini Pro 순서)
+        model_preferences = {
+            "reasoning": ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "claude-haiku", "gemini-flash", "gemini-1.0"],
+            "creative": ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "gemini-flash", "claude-haiku", "gemini-1.0"],
+            "coding": ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "claude-haiku", "gemini-flash", "gemini-1.0"],
+            "speed": ["claude-haiku", "gemini-flash", "gemini-pro", "claude-3.5", "claude", "claude-3.7", "claude-4", "gemini-1.0"],
+            "general": ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "claude-haiku", "gemini-flash", "gemini-1.0"]
+        }
+        
+        preferred_models = model_preferences.get(task_type, model_preferences["general"])
+        
+        # 사용 가능한 모델 중에서 첫 번째 우선순위 모델 선택
+        for model in preferred_models:
+            if model in available_models:
+                logger.info(f"작업 유형 '{task_type}'에 대해 '{model}' 모델 선택")
+                return model
+        
+        # fallback
+        return available_models[0] if available_models else "mock-general"
+
     def is_mock_mode(self) -> bool:
         """Mock 모드 여부 확인"""
         return (
-            not any([settings.GOOGLE_API_KEY, settings.ANTHROPIC_API_KEY, settings.OPENAI_API_KEY]) or
+            not any([
+                settings.GOOGLE_API_KEY, 
+                (settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+            ]) or
             getattr(settings, 'MOCK_LLM_ENABLED', False)
         )
 
+    @log_llm_usage
     async def generate_response(
         self, 
         model_name: str, 
         prompt: str, 
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
         **kwargs
     ) -> tuple[str, str]:
         """
@@ -137,6 +255,8 @@ class LLMRouter:
         Args:
             model_name: 사용할 모델 이름
             prompt: 프롬프트
+            user_id: 사용자 ID (로깅용)
+            conversation_id: 대화 ID (로깅용)
             **kwargs: 추가 파라미터
             
         Returns:

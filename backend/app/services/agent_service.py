@@ -26,7 +26,7 @@ class AgentService:
     async def execute_chat(
         self, 
         message: str, 
-        model: str = "gemini",
+        model: str = "auto",
         agent_type: str = "auto",
         user_id: str = "default_user",
         context: Dict[str, Any] = None
@@ -45,6 +45,20 @@ class AgentService:
             처리 결과
         """
         try:
+            # LLM 라우터를 통한 최적 모델 선택
+            from app.agents.llm_router import llm_router
+            
+            if model == "auto":
+                task_type_mapping = {
+                    "web_search": "speed",
+                    "supervisor": "reasoning",
+                    "auto": "general"
+                }
+                task_type = task_type_mapping.get(agent_type, "general")
+                selected_model = llm_router.get_optimal_model(task_type, len(message))
+            else:
+                selected_model = model
+            
             # 입력 데이터 생성
             agent_input = AgentInput(
                 query=message,
@@ -53,15 +67,35 @@ class AgentService:
             )
             
             # 에이전트 선택 및 실행
-            if agent_type == "auto" or agent_type == "supervisor":
+            if agent_type == "none":
+                # 일반 채팅 모드 - 에이전트 없이 LLM 직접 호출
+                from app.agents.llm_router import llm_router
+                response_text, actual_model = await llm_router.generate_response(
+                    selected_model, 
+                    message, 
+                    user_id=user_id
+                )
+                
+                # AgentResult 형태로 변환
+                from app.agents.base import AgentResult
+                from datetime import datetime
+                result = AgentResult(
+                    agent_id="direct_llm",
+                    result=response_text,
+                    model_used=actual_model,
+                    timestamp=datetime.utcnow().isoformat(),
+                    metadata={"mode": "direct_chat"},
+                    execution_time_ms=0  # 실제 측정은 추후 구현
+                )
+            elif agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
-                result = await self.supervisor.execute(agent_input, model)
+                result = await self.supervisor.execute(agent_input, selected_model)
             else:
                 # 특정 에이전트 직접 실행
                 agent = self.agents.get(agent_type)
                 if not agent:
                     raise ValueError(f"알 수 없는 에이전트 타입: {agent_type}")
-                result = await agent.execute(agent_input, model)
+                result = await agent.execute(agent_input, selected_model)
             
             return {
                 "response": result.result,
@@ -131,7 +165,7 @@ class AgentService:
                 "name": "심층 리서치 에이전트",
                 "description": "특정 주제에 대해 심층적인 연구를 수행합니다",
                 "capabilities": ["심층 분석", "보고서 생성", "다중 소스 종합"],
-                "supported_models": ["gemini", "claude"],
+                "supported_models": ["claude", "gemini", "claude-haiku", "gemini-flash"],
                 "is_enabled": False
             },
             {
@@ -139,7 +173,7 @@ class AgentService:
                 "name": "멀티모달 RAG 에이전트",
                 "description": "문서와 이미지를 분석하여 답변을 생성합니다",
                 "capabilities": ["문서 분석", "이미지 이해", "RAG 검색"],
-                "supported_models": ["gemini", "claude"],
+                "supported_models": ["claude", "gemini", "claude-haiku", "gemini-flash"],
                 "is_enabled": False
             }
         ]
@@ -151,7 +185,7 @@ class AgentService:
         self,
         agent_id: str,
         input_data: Dict[str, Any],
-        model: str = "gemini"
+        model: str = "auto"
     ) -> Dict[str, Any]:
         """
         특정 에이전트 직접 실행
@@ -204,7 +238,7 @@ class AgentService:
     async def stream_response(
         self,
         query: str,
-        model: str = "claude-3-haiku",
+        model: str = "auto",
         agent_type: str = "general",
         conversation_id: str = None,
         user_id: str = "default_user"
@@ -226,21 +260,36 @@ class AgentService:
             # LLM 라우터를 통한 직접 스트리밍
             from app.agents.llm_router import llm_router
             
-            # 모델 이름 정규화
-            model_mapping = {
-                "claude-3-haiku": "claude",
-                "claude-3-sonnet": "claude", 
-                "claude-3-opus": "claude",
-                "gemini-pro": "gemini",
-                "gemini": "gemini",
-                "gpt-4": "openai",
-                "gpt-3.5-turbo": "openai"
-            }
-            
-            normalized_model = model_mapping.get(model, model)
+            # LLM 라우터를 통한 최적 모델 선택
+            if model == "auto":
+                # 에이전트 유형에 따른 최적 모델 선택
+                task_type_mapping = {
+                    "web_search": "speed",
+                    "technical": "reasoning", 
+                    "creative": "creative",
+                    "general": "general"
+                }
+                task_type = task_type_mapping.get(agent_type, "general")
+                normalized_model = llm_router.get_optimal_model(task_type, len(query))
+            else:
+                # 모델 이름 정규화 (새로운 형식 지원)
+                model_mapping = {
+                    "claude-3-haiku": "claude-haiku",
+                    "claude-3-sonnet": "claude", 
+                    "claude-3-5-sonnet": "claude-3.5",
+                    "claude-3.5": "claude-3.5",
+                    "gemini": "gemini-pro",  # 기존 gemini를 gemini-pro로 매핑
+                    "gemini-1.5-pro": "gemini-pro",
+                    "gemini-1.0-pro": "gemini-1.0",
+                    "gemini-flash": "gemini-flash"
+                }
+                normalized_model = model_mapping.get(model, model)
             
             # 에이전트별 프롬프트 구성
-            if agent_type == "web_search":
+            if agent_type == "none":
+                # 일반 채팅 모드 - 간단한 프롬프트
+                prompt = query
+            elif agent_type == "web_search":
                 prompt = f"웹 검색 요청: {query}\n\n최신 정보를 검색하여 정확하고 유용한 답변을 제공해주세요."
             elif agent_type == "technical":
                 prompt = f"기술 질문: {query}\n\n기술적으로 정확하고 실용적인 답변을 제공해주세요."

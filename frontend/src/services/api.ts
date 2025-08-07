@@ -2,7 +2,7 @@
  * API 서비스
  */
 
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import axios from 'axios';
 import type { 
   ChatMessage, 
   ChatResponse, 
@@ -13,7 +13,7 @@ import type {
 } from '../types';
 
 class ApiService {
-  private client: AxiosInstance;
+  private client: ReturnType<typeof axios.create>;
 
   constructor() {
     this.client = axios.create({
@@ -38,7 +38,7 @@ class ApiService {
 
     // 응답 인터셉터
     this.client.interceptors.response.use(
-      (response: AxiosResponse) => {
+      (response) => {
         console.log(`API 응답: ${response.status} ${response.config.url}`);
         return response;
       },

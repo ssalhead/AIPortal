@@ -2,11 +2,12 @@
 채팅 API
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.deps import get_current_active_user
+from app.models.citation import CitedResponse
 
 router = APIRouter()
 
@@ -16,6 +17,9 @@ class ChatMessage(BaseModel):
     message: str
     model: str = "gemini"  # 기본값은 gemini
     agent_type: str = "web_search"  # 기본값은 web_search
+    include_citations: bool = True  # 인용 정보 포함 여부
+    max_sources: int = 10  # 최대 출처 개수
+    min_confidence: float = 0.7  # 최소 인용 신뢰도
 
 
 class ChatResponse(BaseModel):
@@ -25,6 +29,10 @@ class ChatResponse(BaseModel):
     model_used: str
     timestamp: str
     user_id: str
+    # 인용 정보 추가
+    citations: List[Dict[str, Any]] = []
+    sources: List[Dict[str, Any]] = []
+    citation_stats: Optional[Dict[str, Any]] = None
 
 
 @router.post("/", response_model=ChatResponse)
@@ -40,9 +48,11 @@ async def send_message(
         current_user: 현재 사용자 정보
         
     Returns:
-        AI 응답
+        AI 응답 (인용 정보 포함)
     """
     from app.services.agent_service import agent_service
+    from app.services.citation_service import CitationService
+    from app.services.logging_service import logging_service
     
     # 에이전트 서비스를 통해 메시지 처리
     result = await agent_service.execute_chat(
@@ -52,12 +62,41 @@ async def send_message(
         user_id=current_user["id"]
     )
     
+    # 인용 정보 처리
+    citations = []
+    sources = []
+    citation_stats = None
+    
+    if chat_message.include_citations and result.get("search_results"):
+        citation_service = CitationService(logging_service)
+        
+        cited_response = await citation_service.extract_citations_from_response(
+            response_text=result["response"],
+            search_results=result["search_results"],
+            min_confidence=chat_message.min_confidence
+        )
+        
+        # Pydantic 모델을 딕셔너리로 변환
+        citations = [citation.model_dump() for citation in cited_response.citations]
+        sources = [source.model_dump() for source in cited_response.sources]
+        
+        # 통계 생성
+        if citations or sources:
+            stats = await citation_service.get_citation_stats(
+                cited_response.citations,
+                cited_response.sources
+            )
+            citation_stats = stats.model_dump()
+    
     return ChatResponse(
         response=result["response"],
         agent_used=result["agent_used"],
         model_used=result["model_used"],
         timestamp=result["timestamp"],
-        user_id=result["user_id"]
+        user_id=result["user_id"],
+        citations=citations,
+        sources=sources[:chat_message.max_sources],  # 최대 출처 개수 제한
+        citation_stats=citation_stats
     )
 
 

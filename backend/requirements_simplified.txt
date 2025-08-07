@@ -1,0 +1,68 @@
+# FastAPI 및 웹 프레임워크
+fastapi
+uvicorn[standard]
+python-multipart
+websockets
+
+# 데이터 검증 및 설정
+pydantic
+pydantic-settings
+python-dotenv
+
+# 데이터베이스
+sqlalchemy
+alembic
+asyncpg
+psycopg2-binary
+redis
+boto3
+
+# LangChain 및 AI (호환 가능한 최신 버전)
+langchain
+langchain-core
+langchain-community
+langgraph
+langchain-anthropic
+langchain-google-genai
+langchain-aws
+anthropic
+google-generativeai
+
+# 벡터 저장소 및 검색
+opensearch-py
+numpy
+pandas
+
+# 문서 처리
+pypdf
+python-docx
+pillow
+beautifulsoup4
+markdownify
+
+# 보안
+python-jose[cryptography]
+passlib[bcrypt]
+cryptography
+
+# HTTP 클라이언트
+httpx
+aiohttp
+
+# 유틸리티
+python-json-logger
+structlog
+tenacity
+
+# 개발 도구
+pytest
+pytest-asyncio
+black
+ruff
+mypy
+
+# 모니터링
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+prometheus-client

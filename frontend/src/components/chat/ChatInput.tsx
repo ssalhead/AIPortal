@@ -1,29 +1,62 @@
 /**
- * 채팅 입력 컴포넌트
+ * 채팅 입력 컴포넌트 - Gemini 스타일
  */
 
-import React, { useState, useRef, KeyboardEvent } from 'react';
-import type { LLMModel, AgentType } from '../../types';
+import React, { useState, useRef, KeyboardEvent, useMemo } from 'react';
+import type { LLMModel, AgentType, LLMProvider } from '../../types';
+import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
+import { LoadingSpinner } from '../ui/LoadingSpinner';
+import { useLoading } from '../../contexts/LoadingContext';
+import { Send, Paperclip, ChevronDown, Star, Zap } from 'lucide-react';
 
 interface ChatInputProps {
   onSendMessage: (message: string, model: LLMModel, agentType: AgentType) => void;
   isLoading?: boolean;
   placeholder?: string;
+  selectedProvider: LLMProvider;
+  selectedModel: LLMModel;
+  selectedAgent: AgentType;
+  onProviderChange: (provider: LLMProvider) => void;
+  onModelChange: (model: LLMModel) => void;
+  onAgentChange: (agent: AgentType) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSendMessage,
   isLoading = false,
   placeholder = "메시지를 입력하세요... (Shift+Enter로 줄바꿈)",
+  selectedProvider,
+  selectedModel,
+  selectedAgent,
+  onProviderChange,
+  onModelChange,
+  onAgentChange,
 }) => {
+  const { isTyping, startTyping } = useLoading();
   const [message, setMessage] = useState('');
-  const [selectedModel, setSelectedModel] = useState<LLMModel>('gemini');
-  const [selectedAgent, setSelectedAgent] = useState<AgentType>('web_search');
+  const [showModelSelector, setShowModelSelector] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 선택된 제공업체의 모델 목록 계산
+  const availableModels = useMemo(() => {
+    return MODEL_MAP[selectedProvider] || [];
+  }, [selectedProvider]);
+
+  // 제공업체 변경 시 첫 번째 모델로 자동 설정
+  const handleProviderChange = (provider: LLMProvider) => {
+    onProviderChange(provider);
+    const firstModel = MODEL_MAP[provider]?.[0];
+    if (firstModel) {
+      onModelChange(firstModel.id);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && !isLoading) {
+    if (message.trim() && !isLoading && !isTyping) {
+      // 타이핑 시작
+      startTyping(`${selectedModel} 모델로 응답 생성 중...`, selectedModel);
+      
       onSendMessage(message.trim(), selectedModel, selectedAgent);
       setMessage('');
       if (textareaRef.current) {
@@ -50,71 +83,258 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
-      {/* 모델 및 에이전트 선택 */}
-      <div className="flex space-x-4 mb-3">
-        <div className="flex-1">
-          <label htmlFor="model-select" className="block text-xs font-medium text-gray-700 mb-1">
-            모델 선택
-          </label>
-          <select
-            id="model-select"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value as LLMModel)}
-            className="w-full text-sm border border-gray-300 rounded-md px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            <option value="gemini">Gemini</option>
-            <option value="claude">Claude</option>
-          </select>
-        </div>
-        
-        <div className="flex-1">
-          <label htmlFor="agent-select" className="block text-xs font-medium text-gray-700 mb-1">
-            에이전트 선택
-          </label>
-          <select
-            id="agent-select"
-            value={selectedAgent}
-            onChange={(e) => setSelectedAgent(e.target.value as AgentType)}
-            className="w-full text-sm border border-gray-300 rounded-md px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            <option value="web_search">웹 검색</option>
-            <option value="deep_research">심층 리서치</option>
-            <option value="multimodal_rag">멀티모달 RAG</option>
-          </select>
+    <div className="px-6 py-4">
+      {/* 선택된 모델 정보 및 기능 정보 - 컴팩한 표시 */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center space-x-4">
+            {/* 모델 표시 */}
+            <div className="flex items-center space-x-2">
+              {selectedProvider === 'claude' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium">
+                  <Star className="w-3.5 h-3.5" />
+                  <span>Claude</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Gemini</span>
+                </div>
+              )}
+              
+              {/* 에이전트 표시 */}
+              {selectedAgent && selectedAgent !== 'none' && (
+                <div className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                  selectedAgent === 'web_search' 
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                    : selectedAgent === 'deep_research'
+                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
+                    : 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
+                }`}>
+                  {AGENT_TYPE_MAP[selectedAgent]?.name}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* 상태 표시 */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${
+              isTyping ? 'bg-amber-400 animate-pulse' : 'bg-green-400'
+            }`}></div>
+            <span className="text-slate-500 dark:text-slate-400 text-sm">
+              {isTyping ? 'AI 응답 중...' : '대화 준비됨'}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* 메시지 입력 폼 */}
-      <form onSubmit={handleSubmit} className="flex space-x-3">
-        <div className="flex-1">
+      {/* 메시지 입력 영역 - Gemini 스타일 */}
+      <form onSubmit={handleSubmit}>
+        <div className="relative bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all duration-200 focus-within:border-primary-500 dark:focus-within:border-primary-400 focus-within:ring-4 focus-within:ring-primary-500/10">
+          {/* 텍스트 입력 */}
           <textarea
             ref={textareaRef}
             value={message}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            className="w-full resize-none border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            style={{ minHeight: '40px', maxHeight: '120px' }}
-            disabled={isLoading}
+            placeholder={isTyping ? 'AI가 생각 중입니다...' : '무엇이든 물어보세요...'}
+            className="w-full px-6 py-4 text-slate-900 dark:text-slate-100 bg-transparent border-none resize-none focus:outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500 pr-20"
+            style={{ 
+              minHeight: '56px', 
+              maxHeight: '200px',
+              fontSize: '16px',
+              lineHeight: '1.5'
+            }}
+            disabled={isLoading || isTyping}
           />
+
+          {/* 하단 액션 바 */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 dark:border-slate-700">
+            {/* 왼쪽: 도구들 */}
+            <div className="flex items-center space-x-2">
+              {/* 파일 업로드 버튼 */}
+              <button
+                type="button"
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200"
+                disabled={isLoading || isTyping}
+                title="파일 첨부"
+              >
+                <Paperclip className="w-5 h-5" />
+              </button>
+              
+              {/* 모델/기능 선택 버튼 */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowModelSelector(!showModelSelector)}
+                  className="flex items-center space-x-2 px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200 text-sm"
+                  title="모델 및 기능 선택"
+                >
+                  <span>AI 설정</span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showModelSelector ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {/* 모델 선택 드롭다운 */}
+                {showModelSelector && (
+                  <div className="absolute bottom-full mb-2 left-0 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 min-w-80 z-50">
+                    <div className="space-y-4">
+                      {/* Provider 선택 */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                          AI 모델
+                        </label>
+                        <div className="flex bg-slate-100 dark:bg-slate-700 p-1 rounded-xl">
+                          <button
+                            type="button"
+                            onClick={() => handleProviderChange('claude')}
+                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              selectedProvider === 'claude'
+                                ? 'bg-white dark:bg-slate-600 text-orange-700 dark:text-orange-300 shadow-sm' 
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            <Star className="w-4 h-4" />
+                            Claude
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleProviderChange('gemini')}
+                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              selectedProvider === 'gemini'
+                                ? 'bg-white dark:bg-slate-600 text-blue-700 dark:text-blue-300 shadow-sm' 
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            <Zap className="w-4 h-4" />
+                            Gemini
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 모델 상세 선택 */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                          모델 버전
+                        </label>
+                        <div className="space-y-2">
+                          {availableModels.map((model) => (
+                            <button
+                              key={model.id}
+                              type="button"
+                              onClick={() => onModelChange(model.id)}
+                              className={`w-full text-left p-3 rounded-xl transition-all ${
+                                selectedModel === model.id
+                                  ? 'bg-primary-50 dark:bg-primary-900/20 border-2 border-primary-200 dark:border-primary-700'
+                                  : 'bg-slate-50 dark:bg-slate-700/50 border-2 border-transparent hover:border-slate-200 dark:hover:border-slate-600'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-900 dark:text-slate-100">
+                                  {model.name}
+                                </span>
+                                <div className="flex items-center space-x-1">
+                                  {model.isRecommended && <Star className="w-4 h-4 text-amber-500" />}
+                                  {model.speed === 'fast' && <Zap className="w-4 h-4 text-green-500" />}
+                                </div>
+                              </div>
+                              <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                                {model.description}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 기능 선택 */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                          기능 (선택사항)
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.values(AGENT_TYPE_MAP).map((agent) => (
+                            <button
+                              key={agent.id}
+                              type="button"
+                              onClick={() => onAgentChange(agent.id)}
+                              className={`p-3 rounded-xl text-left transition-all ${
+                                selectedAgent === agent.id
+                                  ? 'bg-primary-50 dark:bg-primary-900/20 border-2 border-primary-200 dark:border-primary-700'
+                                  : 'bg-slate-50 dark:bg-slate-700/50 border-2 border-transparent hover:border-slate-200 dark:hover:border-slate-600'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-2 mb-1">
+                                <span className="text-lg">{agent.icon}</span>
+                                <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
+                                  {agent.name}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-600 dark:text-slate-400">
+                                {agent.description}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* 닫기 버튼 */}
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <button
+                          type="button"
+                          onClick={() => setShowModelSelector(false)}
+                          className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2 px-4 rounded-xl transition-all duration-200 text-sm font-medium"
+                        >
+                          설정 완료
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* 오른쪽: 전송 버튼 및 정보 */}
+            <div className="flex items-center space-x-3">
+              {/* 글자 수 표시 */}
+              {message.length > 0 && (
+                <span className="text-xs text-slate-400 dark:text-slate-500">
+                  {message.length}자
+                </span>
+              )}
+              
+              {/* 전송 버튼 */}
+              <button
+                type="submit"
+                disabled={!message.trim() || isLoading || isTyping}
+                className={`p-2.5 rounded-xl transition-all duration-200 ${
+                  message.trim() && !isLoading && !isTyping
+                    ? 'bg-primary-600 hover:bg-primary-700 dark:bg-primary-700 dark:hover:bg-primary-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95' 
+                    : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                }`}
+                title="메시지 전송 (Enter)"
+              >
+                {(isLoading || isTyping) ? (
+                  <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+              </button>
+            </div>
+          </div>
         </div>
         
-        <button
-          type="submit"
-          disabled={!message.trim() || isLoading}
-          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 flex items-center space-x-2"
-        >
-          {isLoading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              <span>전송 중...</span>
-            </>
-          ) : (
-            <span>전송</span>
-          )}
-        </button>
+        {/* 도움말 텍스트 */}
+        <div className="flex items-center justify-center mt-3 text-xs text-slate-400 dark:text-slate-500 space-x-4">
+          <span>Enter로 전송</span>
+          <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+          <span>Shift+Enter로 줄바꿈</span>
+          <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+          <span>파일 드래그 및 드롭 지원</span>
+        </div>
       </form>
+      
+      {/* 모델/기능 선택 모달 - 필요시 추가 */}
+      {/* TODO: 모델 선택 모달 구현 */}
     </div>
   );
 };
