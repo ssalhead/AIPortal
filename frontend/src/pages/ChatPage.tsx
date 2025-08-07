@@ -16,6 +16,8 @@ import { apiService } from '../services/api';
 import { Star, Zap } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
+import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
+import { useCanvasStore } from '../stores/canvasStore';
 
 interface Message {
   id: string;
@@ -287,71 +289,8 @@ export const ChatPage: React.FC = () => {
         
         {/* 오른쪽 패널 (Canvas 기능 활성화시에만 표시) */}
         {selectedAgent === 'canvas' && (
-          <div className="w-80 bg-slate-100 dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 xl:flex flex-col hidden">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Canvas
-                </h3>
-                <div className="flex items-center gap-1 px-2 py-1 bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-xs font-medium">
-                  🎨 활성
-                </div>
-              </div>
-              
-              {/* Canvas 영역 */}
-              <div className="bg-white dark:bg-slate-700 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-600 h-96 flex items-center justify-center">
-                <div className="text-center text-slate-500 dark:text-slate-400">
-                  <div className="w-16 h-16 mx-auto mb-4 bg-slate-200 dark:bg-slate-600 rounded-full flex items-center justify-center">
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium">
-                    인터랙티브 워크스페이스
-                  </p>
-                  <p className="text-xs mt-1">
-                    아이디어를 시각화하고<br />
-                    협업할 수 있습니다
-                  </p>
-                  <p className="text-xs mt-3 text-slate-400 dark:text-slate-500">
-                    추후 업데이트 예정
-                  </p>
-                </div>
-              </div>
-              
-              {/* Canvas 도구 */}
-              <div className="mt-4 space-y-2">
-                <button className="w-full flex items-center gap-3 p-3 text-left text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
-                  <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
-                    📝
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">텍스트 노트</p>
-                    <p className="text-xs">아이디어를 정리하세요</p>
-                  </div>
-                </button>
-                
-                <button className="w-full flex items-center gap-3 p-3 text-left text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
-                  <div className="w-8 h-8 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
-                    🖼️
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">이미지 생성</p>
-                    <p className="text-xs">AI로 이미지 만들기</p>
-                  </div>
-                </button>
-                
-                <button className="w-full flex items-center gap-3 p-3 text-left text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
-                  <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
-                    🗂️
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">마인드맵</p>
-                    <p className="text-xs">생각을 연결하세요</p>
-                  </div>
-                </button>
-              </div>
-            </div>
+          <div className="flex-1 max-w-2xl bg-slate-100 dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 xl:flex flex-col hidden">
+            <CanvasWorkspace />
           </div>
         )}
       </div>

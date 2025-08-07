@@ -36,7 +36,10 @@
       "Bash(npm --version)",
       "Bash(python:*)",
       "Bash(npm run dev:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(git commit:*)",
+      "Bash(ss:*)",
+      "Bash(npm run dev:*)"
     ],
     "deny": [],
     "additionalDirectories": [
