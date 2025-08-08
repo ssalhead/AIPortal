@@ -37,9 +37,10 @@ export const ChatPage: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<LLMModel>('claude-4');
   const [selectedAgent, setSelectedAgent] = useState<AgentType>('none');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [chatWidth, setChatWidth] = useState(60); // 채팅 영역 비율 (%)
+  const [chatWidth, setChatWidth] = useState(70); // 채팅 영역 비율 (%) - 7:3 비율
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, stopTyping, currentModel } = useLoading();
   const { 
     toasts, 
@@ -177,7 +178,8 @@ export const ChatPage: React.FC = () => {
     if (containerRef.current) {
       const containerWidth = containerRef.current.offsetWidth - (isSidebarOpen ? 256 : 64); // 사이드바 너비 제외
       const leftWidthPercent = (leftWidthPx / containerWidth) * 100;
-      setChatWidth(Math.max(30, Math.min(80, leftWidthPercent))); // 30%-80% 범위로 제한
+      const newChatWidth = Math.max(30, Math.min(80, leftWidthPercent)); // 30%-80% 범위로 제한
+      setChatWidth(Math.round(newChatWidth * 10) / 10); // 소수점 첫째 자리까지 반올림하여 정밀도 개선
     }
   };
 
@@ -189,8 +191,17 @@ export const ChatPage: React.FC = () => {
   };
 
   const getChatWidthPx = () => {
-    return (chatWidth / 100) * getContainerWidth();
+    // useRef로 실제 채팅 영역 너비를 직접 가져오기
+    if (chatAreaRef.current) {
+      return chatAreaRef.current.offsetWidth;
+    }
+    
+    // fallback: 계산된 값
+    const containerWidth = getContainerWidth();
+    const calculatedWidth = (chatWidth / 100) * containerWidth;
+    return Math.round(calculatedWidth);
   };
+
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
@@ -216,6 +227,8 @@ export const ChatPage: React.FC = () => {
           <>
             {/* 리사이저블 채팅 영역 */}
             <div 
+              ref={chatAreaRef}
+              data-chat-area
               className="flex flex-col bg-white dark:bg-slate-800"
               style={{ width: `${chatWidth}%` }}
             >
@@ -322,8 +335,8 @@ export const ChatPage: React.FC = () => {
             <Resizer
               onResize={handleResize}
               initialLeftWidth={getChatWidthPx()}
-              minLeftWidth={300}
-              maxLeftWidth={800}
+              minLeftWidth={Math.min(300, getContainerWidth() * 0.3)} // 컨테이너 30% 최소
+              maxLeftWidth={Math.max(800, getContainerWidth() * 0.8)} // 컨테이너 80% 최대
               containerWidth={getContainerWidth()}
             />
             

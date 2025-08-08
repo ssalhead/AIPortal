@@ -22,24 +22,48 @@ export const Resizer: React.FC<ResizerProps> = ({
 }) => {
   const isDragging = useRef(false);
   const startX = useRef(0);
-  const startLeftWidth = useRef(initialLeftWidth);
+  const startLeftWidth = useRef(0);
+  const dragThreshold = useRef(false);
+
+  // DOM에서 실제 왼쪽 패널 너비를 가져오는 함수
+  const getRealLeftWidth = useCallback(() => {
+    const chatArea = document.querySelector('[data-chat-area]') as HTMLElement;
+    if (chatArea) {
+      return chatArea.offsetWidth;
+    }
+    return initialLeftWidth; // 폴백
+  }, [initialLeftWidth]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    
+    // 실제 DOM에서 현재 너비를 가져와서 기준으로 설정
+    const realWidth = getRealLeftWidth();
+    
     isDragging.current = true;
+    dragThreshold.current = false;
     startX.current = e.clientX;
-    startLeftWidth.current = initialLeftWidth;
+    startLeftWidth.current = realWidth; // 실제 DOM 너비를 기준으로 설정
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
-  }, [initialLeftWidth]);
+  }, [getRealLeftWidth]);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isDragging.current) return;
-
+    
     const deltaX = e.clientX - startX.current;
+    
+    // 최소 3px 이상 움직여야 실제 드래그로 인식 (클릭과 구분)
+    if (Math.abs(deltaX) < 3) {
+      return;
+    }
+    
+    dragThreshold.current = true;
+    
+    // 실제 드래그 계산 - 기준점은 절대 변경하지 않음
     const newLeftWidth = startLeftWidth.current + deltaX;
 
     // 제한 범위 내에서만 리사이즈
@@ -53,6 +77,7 @@ export const Resizer: React.FC<ResizerProps> = ({
 
   const handleMouseUp = useCallback(() => {
     isDragging.current = false;
+    dragThreshold.current = false;
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
     document.body.style.cursor = '';
