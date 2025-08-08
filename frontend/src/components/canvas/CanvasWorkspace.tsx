@@ -114,7 +114,7 @@ export const CanvasWorkspace: React.FC = () => {
   return (
     <div className={`flex flex-col h-full ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
       {/* Canvas 헤더 */}
-      <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
         <div className="flex items-center gap-3">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Canvas
@@ -125,34 +125,34 @@ export const CanvasWorkspace: React.FC = () => {
           </div>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
             title="불러오기"
           >
-            <Upload className="w-4 h-4" />
+            <Upload className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleExport}
-            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
             title="내보내기"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={clearCanvas}
-            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
             title="전체 삭제"
           >
-            <Trash2 className="w-4 h-4" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
             title={isFullscreen ? '축소' : '전체화면'}
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
         
@@ -166,14 +166,14 @@ export const CanvasWorkspace: React.FC = () => {
       </div>
       
       {/* Canvas 도구 모음 */}
-      <div className="flex items-center gap-2 p-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+      <div className="flex items-center gap-1 px-6 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-x-auto">
         {(Object.keys(TOOL_ICONS) as CanvasToolType[]).map((tool) => (
           <button
             key={tool}
             onClick={() => handleToolSelect(tool)}
             disabled={tool === 'code' || tool === 'chart'} // 임시로 비활성화
             className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg transition-all
+              flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0
               ${selectedTool === tool 
                 ? 'bg-blue-500 text-white' 
                 : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -183,9 +183,9 @@ export const CanvasWorkspace: React.FC = () => {
             title={TOOL_NAMES[tool]}
           >
             {TOOL_ICONS[tool]}
-            <span className="text-sm font-medium">{TOOL_NAMES[tool]}</span>
+            <span className="text-xs font-medium hidden sm:inline">{TOOL_NAMES[tool]}</span>
             {(tool === 'code' || tool === 'chart') && (
-              <span className="text-xs opacity-75">(준비중)</span>
+              <span className="text-xs opacity-75 hidden sm:inline">(준비중)</span>
             )}
           </button>
         ))}
@@ -211,7 +211,7 @@ export const CanvasWorkspace: React.FC = () => {
           <div className="h-full flex">
             {/* 아이템 목록 */}
             <div className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 overflow-y-auto">
-              <div className="p-3">
+              <div className="px-4 py-3">
                 <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   Canvas 아이템 ({items.length})
                 </h4>

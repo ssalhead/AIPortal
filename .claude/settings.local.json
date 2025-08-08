@@ -39,7 +39,8 @@
       "Bash(mv:*)",
       "Bash(git commit:*)",
       "Bash(ss:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "additionalDirectories": [

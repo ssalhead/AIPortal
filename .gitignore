@@ -69,4 +69,4 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Claude
-.claude/cache/
+.claude/cache/gh_2.40.1_linux_amd64*

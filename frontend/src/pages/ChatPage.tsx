@@ -11,6 +11,7 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { WelcomeScreen } from '../components/ui/WelcomeScreen';
 import { ToastContainer, useToast } from '../components/ui/Toast';
 import { TypingIndicator } from '../components/ui/TypingIndicator';
+import { Resizer } from '../components/ui/Resizer';
 import { useLoading } from '../contexts/LoadingContext';
 import { apiService } from '../services/api';
 import { Star, Zap } from 'lucide-react';
@@ -36,7 +37,9 @@ export const ChatPage: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<LLMModel>('claude-4');
   const [selectedAgent, setSelectedAgent] = useState<AgentType>('none');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [chatWidth, setChatWidth] = useState(60); // 채팅 영역 비율 (%)
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { isTyping, stopTyping, currentModel } = useLoading();
   const { 
     toasts, 
@@ -135,10 +138,14 @@ export const ChatPage: React.FC = () => {
       
       setMessages(convertedMessages);
       
-      // Toast는 한 번만 표시 (의존성 배열에서 제거)
-      if (convertedMessages.length > 0) {
-        showInfo('채팅 기록을 불러왔습니다.');
-      }
+      // Toast 표시 제거 - 조용히 기록을 불러옴
+      // if (convertedMessages.length > 0) {
+      //   showInfo(`${convertedMessages.length / 2}개의 대화를 불러왔습니다.`);
+      // }
+    }
+    // 채팅 히스토리가 빈 배열인 경우 메시지를 빈 배열로 초기화하되 Toast는 표시하지 않음
+    else if (chatHistory && chatHistory.length === 0) {
+      setMessages([]);
     }
   }, [chatHistory]); // showInfo 의존성 제거
 
@@ -166,6 +173,25 @@ export const ChatPage: React.FC = () => {
     showInfo(`${agentType === 'web_search' ? '웹 검색' : agentType === 'deep_research' ? '심층 리서치' : agentType === 'canvas' ? 'Canvas' : '창작'} 모드를 선택했습니다.`);
   };
 
+  const handleResize = (leftWidthPx: number) => {
+    if (containerRef.current) {
+      const containerWidth = containerRef.current.offsetWidth - (isSidebarOpen ? 256 : 64); // 사이드바 너비 제외
+      const leftWidthPercent = (leftWidthPx / containerWidth) * 100;
+      setChatWidth(Math.max(30, Math.min(80, leftWidthPercent))); // 30%-80% 범위로 제한
+    }
+  };
+
+  const getContainerWidth = () => {
+    if (containerRef.current) {
+      return containerRef.current.offsetWidth - (isSidebarOpen ? 256 : 64);
+    }
+    return 800; // 기본값
+  };
+
+  const getChatWidthPx = () => {
+    return (chatWidth / 100) * getContainerWidth();
+  };
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
       {/* Toast 컨테이너 */}
@@ -175,7 +201,7 @@ export const ChatPage: React.FC = () => {
       <Header />
       
       {/* 메인 콘텐츠 - 3열 레이아웃 */}
-      <div className="flex flex-1 overflow-hidden">
+      <div ref={containerRef} className="flex flex-1 overflow-hidden">
         {/* 사이드바 */}
         <Sidebar
           isOpen={isSidebarOpen}
@@ -186,111 +212,229 @@ export const ChatPage: React.FC = () => {
           onDeleteChat={(chatId) => console.log('Delete chat:', chatId)}
         />
         
-        {/* 중앙 채팅 영역 */}
-        <div className="flex-1 flex flex-col bg-white dark:bg-slate-800">
-          {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
-          {messages.length > 0 && (
-            <div className="border-b border-slate-200 dark:border-slate-700 px-6 py-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  {/* 모델 표시 */}
-                  <div className="flex items-center space-x-2">
-                    {selectedProvider === 'claude' ? (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium">
-                        <Star className="w-3.5 h-3.5" />
-                        <span>Claude</span>
+        {selectedAgent === 'canvas' ? (
+          <>
+            {/* 리사이저블 채팅 영역 */}
+            <div 
+              className="flex flex-col bg-white dark:bg-slate-800"
+              style={{ width: `${chatWidth}%` }}
+            >
+              {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
+              {messages.length > 0 && (
+                <div className="border-b border-slate-200 dark:border-slate-700 px-6 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      {/* 모델 표시 */}
+                      <div className="flex items-center space-x-2">
+                        {selectedProvider === 'claude' ? (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium">
+                            <Star className="w-3.5 h-3.5" />
+                            <span>Claude</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
+                            <Zap className="w-3.5 h-3.5" />
+                            <span>Gemini</span>
+                          </div>
+                        )}
+                        
+                        {/* 모델 버전 */}
+                        <span className="text-sm text-slate-600 dark:text-slate-400">
+                          {MODEL_MAP[selectedProvider]?.find(m => m.id === selectedModel)?.name}
+                        </span>
+                        
+                        {/* 에이전트 표시 */}
+                        {selectedAgent && selectedAgent !== 'none' && (
+                          <div className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                            selectedAgent === 'web_search' 
+                              ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                              : selectedAgent === 'deep_research'
+                              ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
+                              : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300'
+                          }`}>
+                            {AGENT_TYPE_MAP[selectedAgent]?.name}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
-                        <Zap className="w-3.5 h-3.5" />
-                        <span>Gemini</span>
-                      </div>
-                    )}
+                    </div>
                     
-                    {/* 모델 버전 */}
-                    <span className="text-sm text-slate-600 dark:text-slate-400">
-                      {MODEL_MAP[selectedProvider]?.find(m => m.id === selectedModel)?.name}
-                    </span>
-                    
-                    {/* 에이전트 표시 */}
-                    {selectedAgent && selectedAgent !== 'none' && (
-                      <div className={`px-3 py-1.5 rounded-full text-sm font-medium ${
-                        selectedAgent === 'web_search' 
-                          ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                          : selectedAgent === 'deep_research'
-                          ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
-                          : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300'
-                      }`}>
-                        {AGENT_TYPE_MAP[selectedAgent]?.name}
-                      </div>
-                    )}
+                    {/* 채팅 액션 */}
+                    <div className="text-sm text-slate-500 dark:text-slate-400">
+                      {messages.length}개 메시지
+                    </div>
                   </div>
                 </div>
-                
-                {/* 채팅 액션 */}
-                <div className="text-sm text-slate-500 dark:text-slate-400">
-                  {messages.length}개 메시지
+              )}
+              
+              {/* 채팅 메시지 영역 */}
+              <div className="flex-1 overflow-y-auto">
+                <div className="h-full">
+                  {messages.length === 0 ? (
+                    <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
+                  ) : (
+                    <div className="px-6 py-6 space-y-6 max-w-4xl mx-auto">
+                      {messages.map((msg, index) => (
+                        <ChatMessage
+                          key={msg.id}
+                          message={msg.content}
+                          isUser={msg.isUser}
+                          timestamp={msg.timestamp}
+                          agentType={msg.agentType}
+                          model={msg.model}
+                          citations={msg.citations}
+                          sources={msg.sources}
+                          citationMode="preview"
+                        />
+                      ))}
+                      
+                      {/* 타이핑 인디케이터 */}
+                      {isTyping && (
+                        <ChatMessage
+                          message=""
+                          isUser={false}
+                          isTyping={true}
+                          model={currentModel}
+                        />
+                      )}
+                      
+                      <div ref={messagesEndRef} />
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
-          
-          {/* 채팅 메시지 영역 */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="h-full">
-              {messages.length === 0 ? (
-                <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
-              ) : (
-                <div className="px-6 py-6 space-y-6 max-w-4xl mx-auto">
-                  {messages.map((msg, index) => (
-                    <ChatMessage
-                      key={msg.id}
-                      message={msg.content}
-                      isUser={msg.isUser}
-                      timestamp={msg.timestamp}
-                      agentType={msg.agentType}
-                      model={msg.model}
-                      citations={msg.citations}
-                      sources={msg.sources}
-                      citationMode="preview"
-                    />
-                  ))}
-                  
-                  {/* 타이핑 인디케이터 */}
-                  {isTyping && (
-                    <ChatMessage
-                      message=""
-                      isUser={false}
-                      isTyping={true}
-                      model={currentModel}
-                    />
-                  )}
-                  
-                  <div ref={messagesEndRef} />
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* 채팅 입력 영역 */}
-          <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-            <ChatInput
-              onSendMessage={handleSendMessage}
-              isLoading={sendMessageMutation.isPending}
-              selectedProvider={selectedProvider}
-              selectedModel={selectedModel}
-              selectedAgent={selectedAgent}
-              onProviderChange={setSelectedProvider}
-              onModelChange={setSelectedModel}
-              onAgentChange={setSelectedAgent}
+              {/* 채팅 입력 영역 */}
+              <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                <ChatInput
+                  onSendMessage={handleSendMessage}
+                  isLoading={sendMessageMutation.isPending}
+                  selectedProvider={selectedProvider}
+                  selectedModel={selectedModel}
+                  selectedAgent={selectedAgent}
+                  onProviderChange={setSelectedProvider}
+                  onModelChange={setSelectedModel}
+                  onAgentChange={setSelectedAgent}
+                />
+              </div>
+            </div>
+            
+            {/* 리사이저 */}
+            <Resizer
+              onResize={handleResize}
+              initialLeftWidth={getChatWidthPx()}
+              minLeftWidth={300}
+              maxLeftWidth={800}
+              containerWidth={getContainerWidth()}
             />
-          </div>
-        </div>
-        
-        {/* 오른쪽 패널 (Canvas 기능 활성화시에만 표시) */}
-        {selectedAgent === 'canvas' && (
-          <div className="flex-1 max-w-2xl bg-slate-100 dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 xl:flex flex-col hidden">
-            <CanvasWorkspace />
+            
+            {/* Canvas 영역 */}
+            <div 
+              className="flex flex-col bg-slate-100 dark:bg-slate-800 min-w-0"
+              style={{ width: `${100 - chatWidth}%` }}
+            >
+              <CanvasWorkspace />
+            </div>
+          </>
+        ) : (
+          /* Canvas가 비활성화된 경우 기존 레이아웃 */
+          <div className="flex-1 flex flex-col bg-white dark:bg-slate-800">
+            {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
+            {messages.length > 0 && (
+              <div className="border-b border-slate-200 dark:border-slate-700 px-6 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    {/* 모델 표시 */}
+                    <div className="flex items-center space-x-2">
+                      {selectedProvider === 'claude' ? (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium">
+                          <Star className="w-3.5 h-3.5" />
+                          <span>Claude</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
+                          <Zap className="w-3.5 h-3.5" />
+                          <span>Gemini</span>
+                        </div>
+                      )}
+                      
+                      {/* 모델 버전 */}
+                      <span className="text-sm text-slate-600 dark:text-slate-400">
+                        {MODEL_MAP[selectedProvider]?.find(m => m.id === selectedModel)?.name}
+                      </span>
+                      
+                      {/* 에이전트 표시 */}
+                      {selectedAgent && selectedAgent !== 'none' && (
+                        <div className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                          selectedAgent === 'web_search' 
+                            ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                            : selectedAgent === 'deep_research'
+                            ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
+                            : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300'
+                        }`}>
+                          {AGENT_TYPE_MAP[selectedAgent]?.name}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 채팅 액션 */}
+                  <div className="text-sm text-slate-500 dark:text-slate-400">
+                    {messages.length}개 메시지
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* 채팅 메시지 영역 */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="h-full">
+                {messages.length === 0 ? (
+                  <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
+                ) : (
+                  <div className="px-6 py-6 space-y-6 max-w-4xl mx-auto">
+                    {messages.map((msg, index) => (
+                      <ChatMessage
+                        key={msg.id}
+                        message={msg.content}
+                        isUser={msg.isUser}
+                        timestamp={msg.timestamp}
+                        agentType={msg.agentType}
+                        model={msg.model}
+                        citations={msg.citations}
+                        sources={msg.sources}
+                        citationMode="preview"
+                      />
+                    ))}
+                    
+                    {/* 타이핑 인디케이터 */}
+                    {isTyping && (
+                      <ChatMessage
+                        message=""
+                        isUser={false}
+                        isTyping={true}
+                        model={currentModel}
+                      />
+                    )}
+                    
+                    <div ref={messagesEndRef} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 채팅 입력 영역 */}
+            <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              <ChatInput
+                onSendMessage={handleSendMessage}
+                isLoading={sendMessageMutation.isPending}
+                selectedProvider={selectedProvider}
+                selectedModel={selectedModel}
+                selectedAgent={selectedAgent}
+                onProviderChange={setSelectedProvider}
+                onModelChange={setSelectedModel}
+                onAgentChange={setSelectedAgent}
+              />
+            </div>
           </div>
         )}
       </div>
