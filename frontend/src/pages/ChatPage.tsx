@@ -16,6 +16,7 @@ import { apiService } from '../services/api';
 import { Star, Zap } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
+import type { SearchResult } from '../components/search/SearchResultsCard';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 
@@ -28,6 +29,8 @@ interface Message {
   model?: string;
   citations?: Citation[];
   sources?: Source[];
+  searchResults?: SearchResult[];
+  searchQuery?: string;
   searchStatus?: {
     isSearching: boolean;
     currentStep: string;
@@ -82,6 +85,24 @@ export const ChatPage: React.FC = () => {
         setCurrentSessionId(response.session_id);
       }
       
+      // 웹 검색 결과를 SearchResult 형식으로 변환 (웹 검색 에이전트인 경우)
+      let searchResults: SearchResult[] = [];
+      let searchQuery = '';
+      
+      if (response.agent_used === 'web_search' && response.citations) {
+        searchQuery = variables.message; // 원본 사용자 쿼리를 검색 쿼리로 사용
+        searchResults = response.citations.map((citation: any, index: number) => ({
+          id: citation.id || `search_${index + 1}`,
+          title: citation.title || '제목 없음',
+          url: citation.url || '',
+          snippet: citation.snippet || '',
+          source: citation.source || 'unknown',
+          score: citation.score || 0.8,
+          timestamp: response.timestamp,
+          provider: citation.source?.split('_')[0] || 'unknown'
+        }));
+      }
+
       // AI 응답 추가 (인용 정보 포함)
       const aiMessage: Message = {
         id: `ai-${Date.now()}`,
@@ -92,6 +113,8 @@ export const ChatPage: React.FC = () => {
         model: response.model_used,
         citations: response.citations || [],
         sources: response.sources || [],
+        searchResults: searchResults,
+        searchQuery: searchQuery,
       };
 
       setMessages(prev => [...prev, aiMessage]);
@@ -421,6 +444,8 @@ export const ChatPage: React.FC = () => {
                           model={msg.model}
                           citations={msg.citations}
                           sources={msg.sources}
+                          searchResults={msg.searchResults}
+                          searchQuery={msg.searchQuery}
                           citationMode="preview"
                         />
                       ))}

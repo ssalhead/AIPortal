@@ -201,6 +201,16 @@ class SearchService:
                     score=0.95
                 ))
             
+            # Definition 정보 (존재하는 경우)
+            if data.get("Definition"):
+                results.append(SearchResult(
+                    title=data.get("Definition", {}).get("Source", query),
+                    url=data.get("Definition", {}).get("FirstURL", ""),
+                    snippet=data.get("Definition", {}).get("Text", ""),
+                    source="duckduckgo_definition",
+                    score=0.93
+                ))
+            
             # Related topics
             for topic in data.get("RelatedTopics", [])[:max_results-len(results)]:
                 if isinstance(topic, dict) and "Text" in topic:
@@ -216,6 +226,74 @@ class SearchService:
             
         except Exception as e:
             print(f"DuckDuckGo 검색 오류: {e}")
+            return []
+    
+    async def search_google(
+        self,
+        query: str,
+        max_results: int = 5,
+        **kwargs
+    ) -> List[SearchResult]:
+        """Google Custom Search API를 사용한 웹 검색"""
+        
+        if not settings.GOOGLE_API_KEY or not settings.GOOGLE_CSE_ID:
+            print("Google API 키 또는 CSE ID가 설정되지 않음")
+            return []
+        
+        try:
+            url = "https://www.googleapis.com/customsearch/v1"
+            params = {
+                "key": settings.GOOGLE_API_KEY,
+                "cx": settings.GOOGLE_CSE_ID,
+                "q": query,
+                "num": min(max_results, 10),  # Google API는 최대 10개까지
+                "hl": kwargs.get("language", "ko"),  # 한국어 인터페이스
+                "safe": "medium"  # SafeSearch 중간 수준
+                # searchType 제거 - 기본값이 웹 검색
+            }
+            
+            response = await self.client.get(url, params=params, timeout=10.0)
+            response.raise_for_status()
+            
+            data = response.json()
+            results = []
+            
+            # 검색 결과가 없는 경우 조기 반환
+            if "items" not in data:
+                print(f"Google 검색 결과 없음: {query}")
+                return []
+            
+            # 검색 결과 파싱
+            items = data.get("items", [])
+            for item in items[:max_results]:
+                # URL 검증 (유효한 HTTP/HTTPS URL인지 확인)
+                link = item.get("link", "")
+                if not link.startswith(("http://", "https://")):
+                    continue
+                
+                result = SearchResult(
+                    title=item.get("title", "").strip(),
+                    url=link,
+                    snippet=item.get("snippet", "").strip(),
+                    source=f"google_{item.get('displayLink', 'unknown')}",
+                    score=0.9 - (len(results) * 0.05)  # 순서에 따른 점수
+                )
+                
+                # 빈 제목이나 스니펫이 있는 결과 필터링
+                if result.title and result.snippet:
+                    results.append(result)
+            
+            print(f"Google 검색 완료: {query} -> {len(results)}개 결과")
+            return results
+            
+        except httpx.TimeoutException:
+            print(f"Google 검색 타임아웃: {query}")
+            return []
+        except httpx.HTTPStatusError as e:
+            print(f"Google 검색 HTTP 오류: {e.response.status_code} - {e.response.text}")
+            return []
+        except Exception as e:
+            print(f"Google 검색 오류: {e}")
             return []
     
     async def search_web(
@@ -252,17 +330,35 @@ class SearchService:
         results = []
         
         try:
-            # 1. DuckDuckGo 검색 시도
+            # 1. DuckDuckGo를 메인 검색 엔진으로 사용 (안정적이고 무료)
             duckduckgo_results = await self.search_duckduckgo(query, max_results, **kwargs)
             results.extend(duckduckgo_results)
+            print(f"DuckDuckGo 검색 결과: {len(duckduckgo_results)}개")
+            
+            # 2. Google Custom Search로 추가 결과 보완 (설정된 경우에만)
+            if len(results) < max_results and settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID:
+                remaining = max_results - len(results)
+                try:
+                    google_results = await self.search_google(query, remaining, **kwargs)
+                    results.extend(google_results)
+                    print(f"Google 검색 추가 결과: {len(google_results)}개")
+                except Exception as google_error:
+                    print(f"Google 검색 실패 (무시하고 계속): {google_error}")
             
         except Exception as e:
             print(f"실제 검색 오류: {e}")
+            # Google과 DuckDuckGo 모두 실패하면 Mock 검색 시도
+            try:
+                mock_results = await self.search_web_mock(query, max_results, **kwargs)
+                results.extend(mock_results)
+                print(f"Mock 검색 결과로 대체: {len(mock_results)}개")
+            except Exception as mock_error:
+                print(f"Mock 검색도 실패: {mock_error}")
         
-        # 2. 결과가 부족하면 Mock 결과로 보완
-        if len(results) < max_results:
-            remaining = max_results - len(results)
-            mock_results = await self.search_web_mock(query, remaining, **kwargs)
+        # 2. 모든 실제 검색이 실패했을 때만 Mock 결과 사용
+        if not results:
+            print("모든 실제 검색 실패 - Mock 검색 결과 사용")
+            mock_results = await self.search_web_mock(query, max_results, **kwargs)
             results.extend(mock_results)
         
         # 3. 결과가 있으면 캐시에 저장

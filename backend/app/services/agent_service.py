@@ -9,6 +9,7 @@ import asyncio
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
 from app.agents.workers.web_search import web_search_agent
+from app.agents.workers.canvas import canvas_agent
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class AgentService:
         self.agents = {
             "supervisor": supervisor_agent,
             "web_search": web_search_agent,
+            "canvas": canvas_agent,
         }
     
     async def execute_chat(

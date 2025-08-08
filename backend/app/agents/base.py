@@ -3,7 +3,7 @@ AI 에이전트 베이스 클래스
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from pydantic import BaseModel
 from datetime import datetime
 import logging
@@ -27,6 +27,10 @@ class AgentOutput(BaseModel):
     agent_id: str
     model_used: str
     timestamp: str
+    canvas_data: Optional[Dict[str, Any]] = None  # Canvas 시각화 데이터
+    citations: Optional[List[Dict[str, Any]]] = None  # 인용 정보
+    sources: Optional[List[Dict[str, Any]]] = None  # 출처 정보
+    error: Optional[str] = None  # 에러 메시지
 
 
 class BaseAgent(ABC):

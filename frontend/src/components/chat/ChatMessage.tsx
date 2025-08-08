@@ -6,6 +6,8 @@ import React, { useState } from 'react';
 import { TypingIndicator } from '../ui/TypingIndicator';
 import { Citation, CitationPreview } from '../citation/Citation';
 import { SourceList } from '../citation/SourceList';
+import { SearchResultsCard } from '../search/SearchResultsCard';
+import type { SearchResult } from '../search/SearchResultsCard';
 import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from 'lucide-react';
 import type { Citation as CitationData, Source as SourceData } from '../../types';
 
@@ -29,6 +31,10 @@ interface ChatMessageProps {
   citations?: CitationData[];
   /** 출처 정보 */
   sources?: SourceData[];
+  /** 검색 결과 (웹 검색 에이전트용) */
+  searchResults?: SearchResult[];
+  /** 검색 쿼리 (웹 검색 에이전트용) */
+  searchQuery?: string;
   /** 인용 표시 모드 */
   citationMode?: 'full' | 'preview' | 'none';
 }
@@ -44,6 +50,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   searchStatus,
   citations = [],
   sources = [],
+  searchResults = [],
+  searchQuery = '',
   citationMode = 'preview',
 }) => {
   const [copySuccess, setCopySuccess] = useState(false);
@@ -291,8 +299,22 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             )}
           </div>
 
-          {/* 출처 및 추가 정보 (AI 응답에만) */}
-          {!isUser && sources.length > 0 && (
+          {/* 검색 결과 시각화 (웹 검색 에이전트용) */}
+          {!isUser && agentType === 'web_search' && searchResults.length > 0 && (
+            <div className="mt-3 ml-1">
+              <SearchResultsCard 
+                query={searchQuery}
+                results={searchResults}
+                collapsible={true}
+                defaultCollapsed={false}
+                maxResults={3}
+                showMetadata={true}
+              />
+            </div>
+          )}
+
+          {/* 출처 및 추가 정보 (AI 응답에만, 웹 검색 아닌 경우) */}
+          {!isUser && agentType !== 'web_search' && sources.length > 0 && (
             <div className="mt-3 ml-1">
               <SourceList 
                 sources={sources} 

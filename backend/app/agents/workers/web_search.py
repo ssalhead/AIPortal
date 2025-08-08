@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from urllib.parse import quote_plus
 import json
 import logging
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
@@ -73,31 +74,61 @@ class WebSearchAgent(BaseAgent):
                 
                 execution_time = int((time.time() - start_time) * 1000)
                 
+                # 검색 결과를 citations와 sources로 변환
+                citations = []
+                sources = []
+                
+                for i, result in enumerate(search_results[:5]):
+                    citation = {
+                        "id": f"search_{i+1}",
+                        "title": result.title,
+                        "url": result.url,
+                        "snippet": result.snippet[:200] + "..." if len(result.snippet) > 200 else result.snippet,
+                        "source": result.source,
+                        "score": result.score
+                    }
+                    citations.append(citation)
+                    
+                    source = {
+                        "title": result.title,
+                        "url": result.url,
+                        "type": "web_search",
+                        "provider": result.source.split('_')[0] if '_' in result.source else result.source
+                    }
+                    sources.append(source)
+                
                 metadata = {
                     "search_query": search_query,
                     "results_count": len(search_results),
-                    "sources": [result.url for result in search_results[:3]],
-                    "search_method": "enhanced_search_service",
-                    "cache_used": "검색 결과가 캐시되었습니다" if search_results else "새로운 검색 수행",
-                    "suggestions": await search_service.get_search_suggestions(search_query)
+                    "search_method": "enhanced_web_search",
+                    "cache_used": len(search_results) > 0,
+                    "top_sources": [s["title"] for s in sources[:3]]
                 }
                 
-                return self.create_output(
+                # AgentOutput 직접 생성 (citations, sources 포함)
+                return AgentOutput(
                     result=enhanced_summary,
                     metadata=metadata,
                     execution_time_ms=execution_time,
-                    model_used=model
+                    agent_id=self.agent_id,
+                    model_used=model,
+                    timestamp=datetime.now().isoformat(),
+                    citations=citations,
+                    sources=sources
                 )
                 
             except Exception as e:
                 self.logger.error(f"웹 검색 실행 중 오류: {e}")
                 execution_time = int((time.time() - start_time) * 1000)
                 
-                return self.create_output(
+                return AgentOutput(
                     result=f"죄송합니다. 웹 검색 중 오류가 발생했습니다: {str(e)}",
-                    metadata={"error": str(e)},
+                    metadata={"error": True, "error_message": str(e)},
                     execution_time_ms=execution_time,
-                    model_used=model
+                    agent_id=self.agent_id,
+                    model_used=model,
+                    timestamp=datetime.now().isoformat(),
+                    error=str(e)
                 )
     
     async def _extract_search_query(self, user_query: str, model: str) -> str:

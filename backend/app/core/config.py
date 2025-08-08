@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     
+    # Google Custom Search 설정
+    GOOGLE_CSE_ID: Optional[str] = None
+    
     # 모니터링
     LANGSMITH_API_KEY: Optional[str] = None
     LANGSMITH_PROJECT: str = "ai-portal"
