@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronDown, Zap } from 'lucide-react';
+import { ChevronDown, Zap, Menu } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
 export const Header: React.FC = () => {
@@ -14,6 +14,19 @@ export const Header: React.FC = () => {
     <header className="sticky top-0 z-40 w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
+          {/* 모바일 사이드바 토글 */}
+          <div className="flex items-center space-x-4">
+            <button
+              className="md:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              onClick={() => {
+                // 모바일 사이드바 토글 이벤트 (ChatPage에서 처리)
+                const event = new CustomEvent('toggleMobileSidebar');
+                window.dispatchEvent(event);
+              }}
+            >
+              <Menu className="w-6 h-6 text-slate-600 dark:text-slate-300" />
+            </button>
+            
           {/* 로고 및 브랜딩 */}
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-2">
@@ -29,6 +42,7 @@ export const Header: React.FC = () => {
                 </span>
               </div>
             </div>
+          </div>
           </div>
 
           <div className="flex-1"></div>

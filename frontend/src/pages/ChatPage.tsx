@@ -13,10 +13,12 @@ import { TypingIndicator } from '../components/ui/TypingIndicator';
 import { Resizer } from '../components/ui/Resizer';
 import { useLoading } from '../contexts/LoadingContext';
 import { useResponsive, useTouchDevice } from '../hooks/useResponsive';
+import { useSidebarWidth } from '../hooks/useSidebarWidth';
 import { apiService } from '../services/api';
 import { Star, Zap, Menu, X } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
+import { SIDEBAR_WIDTHS, CANVAS_SPLIT } from '../constants/layout';
 import type { SearchResult } from '../components/search/SearchResultsCard';
 import type { SearchStep } from '../components/SearchProcess/SearchProgressIndicator';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
@@ -50,10 +52,11 @@ export const ChatPage: React.FC = () => {
   // 반응형 hooks
   const { isMobile, isTablet, isDesktop } = useResponsive();
   const isTouchDevice = useTouchDevice();
+  const { getSidebarWidth, getMainContentMargin, getContainerWidth } = useSidebarWidth();
   
   // 반응형 사이드바 상태
   const [isSidebarOpen, setIsSidebarOpen] = useState(!isMobile); // 모바일에서는 기본적으로 닫힘
-  const [chatWidth, setChatWidth] = useState(70); // 채팅 영역 비율 (%) - 7:3 비율
+  const [chatWidth, setChatWidth] = useState(CANVAS_SPLIT.DEFAULT_CHAT_WIDTH); // 채팅 영역 비율 (%) - 7:3 비율
   const [searchProgress, setSearchProgress] = useState<{
     isSearching: boolean;
     currentStep: string;
@@ -541,6 +544,18 @@ export const ChatPage: React.FC = () => {
     }
   };
 
+  // 헤더의 모바일 사이드바 토글 이벤트 리스너
+  useEffect(() => {
+    const handleToggleEvent = () => {
+      if (isMobile) {
+        setIsSidebarOpen(!isSidebarOpen);
+      }
+    };
+
+    window.addEventListener('toggleMobileSidebar', handleToggleEvent);
+    return () => window.removeEventListener('toggleMobileSidebar', handleToggleEvent);
+  }, [isMobile, isSidebarOpen]);
+
   const handleFeatureSelect = (agentType: AgentType) => {
     // WelcomeScreen에서 기능 선택 시 에이전트 설정
     setSelectedAgent(agentType);
@@ -548,20 +563,13 @@ export const ChatPage: React.FC = () => {
   };
 
   const handleResize = (leftWidthPx: number) => {
-    if (containerRef.current) {
-      const containerWidth = containerRef.current.offsetWidth - (isSidebarOpen ? 256 : 64); // 사이드바 너비 제외
-      const leftWidthPercent = (leftWidthPx / containerWidth) * 100;
-      const newChatWidth = Math.max(30, Math.min(80, leftWidthPercent)); // 30%-80% 범위로 제한
-      setChatWidth(Math.round(newChatWidth * 10) / 10); // 소수점 첫째 자리까지 반올림하여 정밀도 개선
-    }
+    const containerWidth = getContainerWidth(containerRef, isSidebarOpen, isMobile);
+    const leftWidthPercent = (leftWidthPx / containerWidth) * 100;
+    const newChatWidth = Math.max(CANVAS_SPLIT.MIN_CHAT_WIDTH, Math.min(CANVAS_SPLIT.MAX_CHAT_WIDTH, leftWidthPercent));
+    setChatWidth(Math.round(newChatWidth * 10) / 10);
   };
 
-  const getContainerWidth = () => {
-    if (containerRef.current) {
-      return containerRef.current.offsetWidth - (isSidebarOpen ? 256 : 64);
-    }
-    return 800; // 기본값
-  };
+  // getContainerWidth는 useSidebarWidth 훅으로 이동됨
 
   const getChatWidthPx = () => {
     // useRef로 실제 채팅 영역 너비를 직접 가져오기
@@ -570,34 +578,17 @@ export const ChatPage: React.FC = () => {
     }
     
     // fallback: 계산된 값
-    const containerWidth = getContainerWidth();
+    const containerWidth = getContainerWidth(containerRef, isSidebarOpen, isMobile);
     const calculatedWidth = (chatWidth / 100) * containerWidth;
     return Math.round(calculatedWidth);
   };
 
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900">
+    <div className="flex flex-col h-full">
       {/* Toast 컨테이너 */}
       <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
       
-      {/* 모바일 헤더 */}
-      {isMobile && (
-        <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 md:hidden">
-          <button
-            onClick={handleSidebarToggle}
-            className="p-2 -ml-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          >
-            <Menu className="w-6 h-6 text-slate-600 dark:text-slate-300" />
-          </button>
-          
-          <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
-            AI Portal
-          </h1>
-          
-          <div className="w-10" /> {/* Spacer for centering */}
-        </header>
-      )}
       
       {/* 모바일 오버레이 */}
       {isMobile && isSidebarOpen && (
@@ -608,15 +599,13 @@ export const ChatPage: React.FC = () => {
       )}
       
       {/* 메인 콘텐츠 - 3열 레이아웃 */}
-      <div ref={containerRef} className="flex flex-1 overflow-hidden relative">
+      <div ref={containerRef} className="flex flex-1 overflow-hidden relative bg-gray-50 dark:bg-gray-900">
         {/* 사이드바 */}
         <div 
-          className={`${
+          className={`fixed top-16 left-0 bottom-0 z-30 transition-transform duration-300 ${
             isMobile 
-              ? `fixed top-0 left-0 h-full z-50 transform transition-transform duration-300 ${
-                  isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-                }` 
-              : ''
+              ? `transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+              : '' // 데스크톱에서는 transform 없이 항상 표시
           }`}
         >
           <Sidebar
@@ -643,7 +632,10 @@ export const ChatPage: React.FC = () => {
               ref={chatAreaRef}
               data-chat-area
               className="flex flex-col bg-white dark:bg-slate-800"
-              style={{ width: `${chatWidth}%` }}
+              style={{ 
+                width: `${chatWidth}%`,
+                paddingLeft: `${getMainContentMargin(isSidebarOpen, isMobile)}px`
+              }}
             >
               {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
               {messages.length > 0 && (
@@ -762,14 +754,14 @@ export const ChatPage: React.FC = () => {
             <Resizer
               onResize={handleResize}
               initialLeftWidth={getChatWidthPx()}
-              minLeftWidth={Math.min(300, getContainerWidth() * 0.3)} // 컨테이너 30% 최소
-              maxLeftWidth={Math.max(800, getContainerWidth() * 0.8)} // 컨테이너 80% 최대
-              containerWidth={getContainerWidth()}
+              minLeftWidth={Math.min(300, getContainerWidth(containerRef, isSidebarOpen, isMobile) * 0.3)} // 컨테이너 30% 최소
+              maxLeftWidth={Math.max(800, getContainerWidth(containerRef, isSidebarOpen, isMobile) * 0.8)} // 컨테이너 80% 최대
+              containerWidth={getContainerWidth(containerRef, isSidebarOpen, isMobile)}
             />
             
             {/* Canvas 영역 */}
             <div 
-              className="flex flex-col bg-slate-100 dark:bg-slate-800 min-w-0"
+              className="flex flex-col bg-gray-100 dark:bg-gray-800 min-w-0 border-l border-gray-200 dark:border-gray-700"
               style={{ width: `${100 - chatWidth}%` }}
             >
               <CanvasWorkspace />
@@ -782,7 +774,7 @@ export const ChatPage: React.FC = () => {
               isMobile && isSidebarOpen ? 'opacity-50 pointer-events-none' : ''
             }`}
             style={{
-              marginLeft: isMobile ? '0' : (isSidebarOpen ? '256px' : '64px')
+              paddingLeft: `${getMainContentMargin(isSidebarOpen, isMobile)}px`
             }}
           >
             {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
