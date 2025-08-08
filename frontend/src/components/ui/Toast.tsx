@@ -35,30 +35,30 @@ export const Toast: React.FC<ToastProps> = ({
   const getTypeClasses = () => {
     switch (type) {
       case 'success':
-        return 'bg-success-50 border-success-200 text-success-800';
+        return 'border-green-200 text-green-800 dark:border-green-700 dark:text-green-200';
       case 'error':
-        return 'bg-error-50 border-error-200 text-error-800';
+        return 'border-red-200 text-red-800 dark:border-red-700 dark:text-red-200';
       case 'warning':
-        return 'bg-warning-50 border-warning-200 text-warning-800';
+        return 'border-yellow-200 text-yellow-800 dark:border-yellow-700 dark:text-yellow-200';
       case 'info':
-        return 'bg-info-50 border-info-200 text-info-800';
+        return 'border-blue-200 text-blue-800 dark:border-blue-700 dark:text-blue-200';
       default:
-        return 'bg-neutral-50 border-neutral-200 text-neutral-800';
+        return 'border-slate-200 text-slate-800 dark:border-slate-600 dark:text-slate-200';
     }
   };
 
   const getIconClasses = () => {
     switch (type) {
       case 'success':
-        return 'text-success-500';
+        return 'text-green-600 dark:text-green-400';
       case 'error':
-        return 'text-error-500';
+        return 'text-red-600 dark:text-red-400';
       case 'warning':
-        return 'text-warning-500';
+        return 'text-yellow-600 dark:text-yellow-400';
       case 'info':
-        return 'text-info-500';
+        return 'text-blue-600 dark:text-blue-400';
       default:
-        return 'text-neutral-500';
+        return 'text-slate-600 dark:text-slate-400';
     }
   };
 
@@ -96,12 +96,12 @@ export const Toast: React.FC<ToastProps> = ({
   return (
     <div
       className={`
-        fixed top-4 right-4 z-50 max-w-sm w-full pointer-events-auto
+        max-w-md w-full pointer-events-auto
         transform transition-all duration-300 ease-out
-        ${isVisible ? 'translate-x-0 opacity-100 scale-100' : 'translate-x-full opacity-0 scale-95'}
+        ${isVisible ? 'translate-y-0 opacity-100 scale-100' : '-translate-y-2 opacity-0 scale-95'}
       `}
     >
-      <div className={`card-elevated p-4 ${getTypeClasses()}`}>
+      <div className={`rounded-lg shadow-lg border p-4 ${getTypeClasses()} bg-white dark:bg-slate-800`}>
         <div className="flex items-start space-x-3">
           {showIcon && (
             <div className={`flex-shrink-0 ${getIconClasses()}`}>
@@ -109,14 +109,14 @@ export const Toast: React.FC<ToastProps> = ({
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium leading-relaxed">{message}</p>
+            <p className="text-sm font-medium leading-relaxed break-words">{message}</p>
           </div>
           <button
             onClick={() => {
               setIsVisible(false);
               setTimeout(onClose, 300);
             }}
-            className="flex-shrink-0 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-md p-1 transition-all"
+            className="flex-shrink-0 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 rounded-md p-1 transition-all"
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -146,7 +146,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({
   onRemoveToast,
 }) => {
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 space-y-2">
       {toasts.map((toast, index) => (
         <div
           key={toast.id}

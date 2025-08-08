@@ -12,11 +12,13 @@ import { ToastContainer, useToast } from '../components/ui/Toast';
 import { TypingIndicator } from '../components/ui/TypingIndicator';
 import { Resizer } from '../components/ui/Resizer';
 import { useLoading } from '../contexts/LoadingContext';
+import { useResponsive, useTouchDevice } from '../hooks/useResponsive';
 import { apiService } from '../services/api';
-import { Star, Zap } from 'lucide-react';
+import { Star, Zap, Menu, X } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
 import type { SearchResult } from '../components/search/SearchResultsCard';
+import type { SearchStep } from '../components/SearchProcess/SearchProgressIndicator';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 
@@ -36,6 +38,7 @@ interface Message {
     currentStep: string;
     progress: number;
   };
+  searchSteps?: SearchStep[];
 }
 
 export const ChatPage: React.FC = () => {
@@ -43,13 +46,20 @@ export const ChatPage: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider>('claude');
   const [selectedModel, setSelectedModel] = useState<LLMModel>('claude-4');
   const [selectedAgent, setSelectedAgent] = useState<AgentType>('none');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  
+  // 반응형 hooks
+  const { isMobile, isTablet, isDesktop } = useResponsive();
+  const isTouchDevice = useTouchDevice();
+  
+  // 반응형 사이드바 상태
+  const [isSidebarOpen, setIsSidebarOpen] = useState(!isMobile); // 모바일에서는 기본적으로 닫힘
   const [chatWidth, setChatWidth] = useState(70); // 채팅 영역 비율 (%) - 7:3 비율
   const [searchProgress, setSearchProgress] = useState<{
     isSearching: boolean;
     currentStep: string;
     progress: number;
   } | null>(null);
+  const [searchSteps, setSearchSteps] = useState<SearchStep[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,12 +83,17 @@ export const ChatPage: React.FC = () => {
 
   // 메시지 전송 뮤테이션 (기본 버전 - 백업용)
   const sendMessageMutation = useMutation({
-    mutationFn: (messageData: { message: string; model: string; agent_type: string; session_id?: string | null }) =>
-      apiService.sendChatMessage(messageData),
+    mutationFn: (messageData: { message: string; model: string; agent_type: string; session_id?: string | null }) => {
+      console.log('API 호출 시작:', messageData);
+      return apiService.sendChatMessage(messageData);
+    },
     onSuccess: (response, variables) => {
+      console.log('🎉 onSuccess 콜백 실행됨!', response);
+      
       // 타이핑 상태 종료
       stopTyping();
       setSearchProgress(null);
+      setSearchSteps([]);
       
       // 세션 ID 업데이트 (새 세션인 경우)
       if (response.session_id && response.session_id !== currentSessionId) {
@@ -88,6 +103,13 @@ export const ChatPage: React.FC = () => {
       // 웹 검색 결과를 SearchResult 형식으로 변환 (웹 검색 에이전트인 경우)
       let searchResults: SearchResult[] = [];
       let searchQuery = '';
+      
+      console.log('Response data:', {
+        agent_used: response.agent_used,
+        has_citations: !!response.citations,
+        citations_length: response.citations?.length,
+        citations_data: response.citations
+      });
       
       if (response.agent_used === 'web_search' && response.citations) {
         searchQuery = variables.message; // 원본 사용자 쿼리를 검색 쿼리로 사용
@@ -101,6 +123,15 @@ export const ChatPage: React.FC = () => {
           timestamp: response.timestamp,
           provider: citation.source?.split('_')[0] || 'unknown'
         }));
+        
+        // 디버그용 로그 추가
+        console.log('웹 검색 결과:', {
+          agent_used: response.agent_used,
+          citations_count: response.citations?.length || 0,
+          searchResults_count: searchResults.length,
+          searchQuery,
+          sample_citation: response.citations?.[0]
+        });
       }
 
       // AI 응답 추가 (인용 정보 포함)
@@ -118,14 +149,20 @@ export const ChatPage: React.FC = () => {
       };
 
       setMessages(prev => [...prev, aiMessage]);
-      showSuccess('메시지가 성공적으로 전송되었습니다.');
+      // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
     },
     onError: (error: any) => {
       // 타이핑 상태 종료
       stopTyping();
       setSearchProgress(null);
+      setSearchSteps([]);
       
       console.error('메시지 전송 실패:', error);
+      console.error('에러 상세:', {
+        status: error?.response?.status,
+        data: error?.response?.data,
+        message: error?.message
+      });
       
       // 에러 메시지 추가
       const errorMessage: Message = {
@@ -202,42 +239,183 @@ export const ChatPage: React.FC = () => {
       };
       setMessages(prev => [...prev, userMessage]);
 
-      // 검색 진행 상태 시뮬레이션
-      const simulateProgress = () => {
-        const steps = [
-          { step: '검색어 분석 중...', progress: 10, delay: 500 },
-          { step: '웹 검색 중...', progress: 40, delay: 1000 },
-          { step: '검색 결과 분석 중...', progress: 70, delay: 1500 },
-          { step: 'AI 분석 및 답변 생성 중...', progress: 90, delay: 2000 },
-        ];
-        
-        let currentIndex = 0;
-        
-        const updateProgress = () => {
-          if (currentIndex < steps.length) {
-            const { step, progress } = steps[currentIndex];
-            setSearchProgress({
-              isSearching: true,
-              currentStep: step,
-              progress: progress,
-            });
-            currentIndex++;
-            setTimeout(updateProgress, steps[currentIndex - 1]?.delay || 500);
+      // 상세한 검색 진행 단계 시뮬레이션
+      const simulateDetailedProgress = () => {
+        const initialSteps: SearchStep[] = [
+          {
+            id: 'query_analysis',
+            name: '검색어 분석',
+            description: '사용자 질문을 분석하고 검색 키워드를 추출합니다',
+            status: 'pending',
+            startTime: new Date(),
+            progress: 0,
+            details: []
+          },
+          {
+            id: 'query_generation', 
+            name: '검색 쿼리 생성',
+            description: '최적화된 검색 쿼리를 생성합니다',
+            status: 'pending',
+            startTime: undefined,
+            progress: 0,
+            details: []
+          },
+          {
+            id: 'parallel_search',
+            name: '병렬 웹 검색',
+            description: '여러 검색 엔진에서 동시에 검색을 수행합니다',
+            status: 'pending',
+            startTime: undefined,
+            progress: 0,
+            details: []
+          },
+          {
+            id: 'result_filtering',
+            name: '결과 필터링',
+            description: '검색 결과의 품질을 평가하고 필터링합니다',
+            status: 'pending',
+            startTime: undefined,
+            progress: 0,
+            details: []
+          },
+          {
+            id: 'result_ranking',
+            name: '결과 순위화',
+            description: '관련성과 신뢰도에 따라 결과를 순위화합니다',
+            status: 'pending',
+            startTime: undefined,
+            progress: 0,
+            details: []
+          },
+          {
+            id: 'response_generation',
+            name: 'AI 답변 생성',
+            description: '검색 결과를 바탕으로 종합적인 답변을 생성합니다',
+            status: 'pending',
+            startTime: undefined,
+            progress: 0,
+            details: []
           }
-        };
-        
-        // 즉시 첫 번째 단계 시작
-        setSearchProgress({
-          isSearching: true,
-          currentStep: '검색 준비 중...',
-          progress: 0,
+        ];
+
+        setSearchSteps(initialSteps);
+
+        // 단계별 진행 시뮬레이션
+        const progressSteps = [
+          { 
+            stepId: 'query_analysis', 
+            delay: 500, 
+            duration: 800,
+            details: [
+              '질문 의도 파악 중...',
+              '핵심 키워드 추출 중...',
+              '검색 전략 수립 중...'
+            ],
+            metadata: { keywords: message.split(' ').slice(0, 3) }
+          },
+          { 
+            stepId: 'query_generation', 
+            delay: 1200, 
+            duration: 600,
+            details: [
+              '검색 엔진 최적화 쿼리 생성',
+              '동의어 및 관련 용어 추가',
+              '검색 범위 설정'
+            ],
+            metadata: { queries: ['주요 쿼리', '보조 쿼리 1', '보조 쿼리 2'] }
+          },
+          { 
+            stepId: 'parallel_search', 
+            delay: 1800, 
+            duration: 2000,
+            details: [
+              'Google 검색 실행 중...',
+              'Bing 검색 실행 중...',
+              '추가 소스 검색 중...',
+              '검색 결과 수집 완료'
+            ],
+            metadata: { sources: 4, totalResults: 28 }
+          },
+          { 
+            stepId: 'result_filtering', 
+            delay: 3800, 
+            duration: 1000,
+            details: [
+              '중복 결과 제거 중...',
+              '품질 점수 계산 중...',
+              '관련성 평가 중...',
+              '신뢰도 검증 중...'
+            ],
+            metadata: { filteredResults: 12, qualityScore: 8.5 }
+          },
+          { 
+            stepId: 'result_ranking', 
+            delay: 4800, 
+            duration: 800,
+            details: [
+              '관련성 점수 계산',
+              '신뢰도 가중치 적용',
+              '최종 순위 결정'
+            ],
+            metadata: { topResults: 5, avgRelevance: 9.2 }
+          },
+          { 
+            stepId: 'response_generation', 
+            delay: 5600, 
+            duration: 1500,
+            details: [
+              '핵심 정보 추출 중...',
+              '답변 구조 설계 중...',
+              '인용 정보 정리 중...',
+              '최종 답변 생성 중...'
+            ],
+            metadata: { citations: 3, confidence: 0.92 }
+          }
+        ];
+
+        progressSteps.forEach(({ stepId, delay, duration, details, metadata }) => {
+          // 단계 시작
+          setTimeout(() => {
+            setSearchSteps(prev => prev.map(step => 
+              step.id === stepId 
+                ? { 
+                    ...step, 
+                    status: 'in_progress', 
+                    startTime: new Date(),
+                    details: details,
+                    metadata: metadata
+                  }
+                : step
+            ));
+
+            // 진행률 업데이트 (애니메이션)
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+              progress += Math.random() * 25;
+              if (progress >= 100) {
+                progress = 100;
+                clearInterval(progressInterval);
+                
+                // 단계 완료
+                setTimeout(() => {
+                  setSearchSteps(prev => prev.map(step => 
+                    step.id === stepId 
+                      ? { ...step, status: 'completed', endTime: new Date(), progress: 100 }
+                      : step
+                  ));
+                }, 200);
+              } else {
+                setSearchSteps(prev => prev.map(step => 
+                  step.id === stepId ? { ...step, progress } : step
+                ));
+              }
+            }, duration / 10);
+          }, delay);
         });
-        
-        setTimeout(updateProgress, 300);
       };
 
-      // 진행 상태 시뮬레이션 시작
-      simulateProgress();
+      // 상세 진행 상태 시뮬레이션 시작
+      simulateDetailedProgress();
 
       try {
         const response = await apiService.sendChatMessage({
@@ -249,6 +427,7 @@ export const ChatPage: React.FC = () => {
 
         // 검색 진행 상태 및 타이핑 인디케이터 종료
         setSearchProgress(null);
+        setSearchSteps([]);
         stopTyping();
         
         // 세션 ID 업데이트 (새 세션인 경우)
@@ -256,6 +435,30 @@ export const ChatPage: React.FC = () => {
           setCurrentSessionId(response.session_id);
         }
         
+        // 웹 검색 결과를 SearchResult 형식으로 변환
+        let searchResults: SearchResult[] = [];
+        let searchQuery = '';
+        
+        if (response.agent_used === 'web_search' && response.citations) {
+          searchQuery = message; // 원본 사용자 쿼리를 검색 쿼리로 사용
+          searchResults = response.citations.map((citation: any, index: number) => ({
+            id: citation.id || `search_${index + 1}`,
+            title: citation.title || '제목 없음',
+            url: citation.url || '',
+            snippet: citation.snippet || '',
+            source: citation.source || 'unknown',
+            score: citation.score || 0.8,
+            timestamp: response.timestamp,
+            provider: citation.source?.split('_')[0] || 'unknown'
+          }));
+          
+          console.log('웹 검색 결과 변환 완료:', {
+            searchQuery,
+            searchResults_count: searchResults.length,
+            sample_result: searchResults[0]
+          });
+        }
+
         // AI 응답 추가 (인용 정보 포함)
         const aiMessage: Message = {
           id: `ai-${Date.now()}`,
@@ -266,14 +469,17 @@ export const ChatPage: React.FC = () => {
           model: response.model_used,
           citations: response.citations || [],
           sources: response.sources || [],
+          searchResults: searchResults,
+          searchQuery: searchQuery,
         };
 
         setMessages(prev => [...prev, aiMessage]);
-        showSuccess('메시지가 성공적으로 전송되었습니다.');
+        // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
         
       } catch (error: any) {
         // 검색 진행 상태 및 타이핑 인디케이터 종료
         setSearchProgress(null);
+        setSearchSteps([]);
         stopTyping();
         
         // 에러 메시지 추가
@@ -317,6 +523,22 @@ export const ChatPage: React.FC = () => {
     setMessages([]);
     setCurrentSessionId(null); // 새 세션 시작
     showInfo('새 대화를 시작합니다.');
+    
+    // 모바일에서는 새 대화 시작 시 사이드바 자동 닫기
+    if (isMobile) {
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleSidebarToggle = () => {
+    setIsSidebarOpen(!isSidebarOpen);
+  };
+
+  // 모바일에서 사이드바 외부 클릭 시 닫기
+  const handleOverlayClick = () => {
+    if (isMobile && isSidebarOpen) {
+      setIsSidebarOpen(false);
+    }
   };
 
   const handleFeatureSelect = (agentType: AgentType) => {
@@ -359,21 +581,64 @@ export const ChatPage: React.FC = () => {
       {/* Toast 컨테이너 */}
       <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
       
-      {/* 메인 콘텐츠 - 3열 레이아웃 */}
-      <div ref={containerRef} className="flex flex-1 overflow-hidden">
-        {/* 사이드바 */}
-        <Sidebar
-          isOpen={isSidebarOpen}
-          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-          onNewChat={handleNewChat}
-          chatHistory={[]} // TODO: 실제 채팅 히스토리 연결
-          onSelectChat={(chatId) => console.log('Select chat:', chatId)}
-          onDeleteChat={(chatId) => console.log('Delete chat:', chatId)}
+      {/* 모바일 헤더 */}
+      {isMobile && (
+        <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 md:hidden">
+          <button
+            onClick={handleSidebarToggle}
+            className="p-2 -ml-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+          >
+            <Menu className="w-6 h-6 text-slate-600 dark:text-slate-300" />
+          </button>
+          
+          <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
+            AI Portal
+          </h1>
+          
+          <div className="w-10" /> {/* Spacer for centering */}
+        </header>
+      )}
+      
+      {/* 모바일 오버레이 */}
+      {isMobile && isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={handleOverlayClick}
         />
+      )}
+      
+      {/* 메인 콘텐츠 - 3열 레이아웃 */}
+      <div ref={containerRef} className="flex flex-1 overflow-hidden relative">
+        {/* 사이드바 */}
+        <div 
+          className={`${
+            isMobile 
+              ? `fixed top-0 left-0 h-full z-50 transform transition-transform duration-300 ${
+                  isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                }` 
+              : ''
+          }`}
+        >
+          <Sidebar
+            isOpen={isSidebarOpen}
+            onToggle={handleSidebarToggle}
+            onNewChat={handleNewChat}
+            chatHistory={[]} // TODO: 실제 채팅 히스토리 연결
+            onSelectChat={(chatId) => {
+              console.log('Select chat:', chatId);
+              // 모바일에서 채팅 선택 시 사이드바 닫기
+              if (isMobile) {
+                setIsSidebarOpen(false);
+              }
+            }}
+            onDeleteChat={(chatId) => console.log('Delete chat:', chatId)}
+            isMobile={isMobile}
+          />
+        </div>
         
-        {selectedAgent === 'canvas' ? (
+        {selectedAgent === 'canvas' && !isMobile ? (
           <>
-            {/* 리사이저블 채팅 영역 */}
+            {/* 리사이저블 채팅 영역 - 데스크톱만 */}
             <div 
               ref={chatAreaRef}
               data-chat-area
@@ -442,25 +707,28 @@ export const ChatPage: React.FC = () => {
                           timestamp={msg.timestamp}
                           agentType={msg.agentType}
                           model={msg.model}
+                          messageId={msg.id}
+                          conversationId={currentSessionId}
                           citations={msg.citations}
                           sources={msg.sources}
                           searchResults={msg.searchResults}
                           searchQuery={msg.searchQuery}
-                          citationMode="preview"
+                          citationMode={msg.agentType === 'web_search' ? 'none' : 'preview'}
                         />
                       ))}
                       
                       {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
-                      {searchProgress && (
+                      {(searchProgress || searchSteps.length > 0) && (
                         <ChatMessage
                           message=""
                           isUser={false}
                           searchStatus={searchProgress}
+                          searchSteps={searchSteps}
                           model={selectedModel}
                         />
                       )}
                       
-                      {!searchProgress && isTyping && (
+                      {!searchProgress && searchSteps.length === 0 && isTyping && (
                         <ChatMessage
                           message=""
                           isUser={false}
@@ -508,8 +776,15 @@ export const ChatPage: React.FC = () => {
             </div>
           </>
         ) : (
-          /* Canvas가 비활성화된 경우 기존 레이아웃 */
-          <div className="flex-1 flex flex-col bg-white dark:bg-slate-800">
+          /* Canvas가 비활성화되거나 모바일인 경우 풀스크린 채팅 */
+          <div 
+            className={`flex-1 flex flex-col bg-white dark:bg-slate-800 ${
+              isMobile && isSidebarOpen ? 'opacity-50 pointer-events-none' : ''
+            }`}
+            style={{
+              marginLeft: isMobile ? '0' : (isSidebarOpen ? '256px' : '64px')
+            }}
+          >
             {/* 채팅 헤더 - 선택된 모델과 기능 표시 */}
             {messages.length > 0 && (
               <div className="border-b border-slate-200 dark:border-slate-700 px-6 py-3">
@@ -572,23 +847,28 @@ export const ChatPage: React.FC = () => {
                         timestamp={msg.timestamp}
                         agentType={msg.agentType}
                         model={msg.model}
+                        messageId={msg.id}
+                        conversationId={currentSessionId}
                         citations={msg.citations}
                         sources={msg.sources}
-                        citationMode="preview"
+                        searchResults={msg.searchResults}
+                        searchQuery={msg.searchQuery}
+                        citationMode={msg.agentType === 'web_search' ? 'none' : 'preview'}
                       />
                     ))}
                     
                     {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
-                    {searchProgress && (
+                    {(searchProgress || searchSteps.length > 0) && (
                       <ChatMessage
                         message=""
                         isUser={false}
                         searchStatus={searchProgress}
+                        searchSteps={searchSteps}
                         model={selectedModel}
                       />
                     )}
                     
-                    {!searchProgress && isTyping && (
+                    {!searchProgress && searchSteps.length === 0 && isTyping && (
                       <ChatMessage
                         message=""
                         isUser={false}

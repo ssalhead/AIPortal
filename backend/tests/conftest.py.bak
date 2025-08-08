@@ -1,0 +1,244 @@
+"""
+공통 테스트 설정 및 픽스처
+"""
+
+import pytest
+import asyncio
+from typing import AsyncGenerator, Generator
+from unittest.mock import Mock, AsyncMock
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+from httpx import AsyncClient
+
+from app.main import app
+from app.core.config import settings
+from app.db.base import Base
+from app.db.session import get_db
+from app.services.conversation_service import ConversationService
+from app.services.feedback_service import FeedbackService
+from app.services.cache_manager import CacheManager
+
+
+# 테스트용 인메모리 데이터베이스 설정
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """테스트용 이벤트 루프"""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture
+def db_session():
+    """테스트용 데이터베이스 세션"""
+    Base.metadata.create_all(bind=engine)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def override_get_db(db_session):
+    """데이터베이스 의존성 오버라이드"""
+    def _override_get_db():
+        try:
+            yield db_session
+        finally:
+            db_session.close()
+    
+    app.dependency_overrides[get_db] = _override_get_db
+    yield
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(override_get_db) -> Generator[TestClient, None, None]:
+    """테스트 클라이언트"""
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+async def async_client(override_get_db) -> AsyncGenerator[AsyncClient, None]:
+    """비동기 테스트 클라이언트"""
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest.fixture
+def mock_llm_client():
+    """모킹된 LLM 클라이언트"""
+    mock = AsyncMock()
+    mock.generate_response = AsyncMock(return_value={
+        "response": "테스트 응답입니다.",
+        "model_used": "claude-3",
+        "tokens_input": 10,
+        "tokens_output": 5,
+        "latency_ms": 1500,
+        "agent_used": "none",
+        "citations": [],
+        "sources": []
+    })
+    return mock
+
+
+@pytest.fixture
+def mock_cache_manager():
+    """모킹된 캐시 매니저"""
+    mock = Mock(spec=CacheManager)
+    mock.get = Mock(return_value=None)
+    mock.set = Mock()
+    mock.delete = Mock()
+    mock.clear_pattern = Mock()
+    mock.get_stats = Mock(return_value={
+        "total_keys": 0,
+        "memory_usage": "0 MB",
+        "hit_rate": 0.0
+    })
+    return mock
+
+
+@pytest.fixture
+def sample_conversation_data():
+    """샘플 대화 데이터"""
+    return {
+        "title": "테스트 대화",
+        "description": "테스트용 대화입니다",
+        "model": "claude-3",
+        "agent_type": "none",
+        "metadata_": {"test": True}
+    }
+
+
+@pytest.fixture
+def sample_message_data():
+    """샘플 메시지 데이터"""
+    return {
+        "role": "user",
+        "content": "안녕하세요, 테스트 메시지입니다.",
+        "model": "claude-3",
+        "tokens_input": 10,
+        "tokens_output": 0,
+        "metadata_": {}
+    }
+
+
+@pytest.fixture
+def sample_feedback_data():
+    """샘플 피드백 데이터"""
+    return {
+        "message_id": "test-message-id",
+        "feedback_type": "thumbs",
+        "is_positive": True,
+        "category": "overall",
+        "conversation_id": "test-conversation-id",
+        "agent_type": "none",
+        "model_used": "claude-3",
+        "user_query": "테스트 질문",
+        "ai_response": "테스트 응답"
+    }
+
+
+@pytest.fixture
+def conversation_service(db_session, mock_cache_manager):
+    """ConversationService 인스턴스"""
+    return ConversationService(db_session, mock_cache_manager)
+
+
+@pytest.fixture
+def feedback_service(db_session):
+    """FeedbackService 인스턴스"""
+    return FeedbackService(db_session)
+
+
+# 테스트 헬퍼 함수들
+class TestHelpers:
+    @staticmethod
+    def create_test_conversation(session, **kwargs):
+        """테스트용 대화 생성"""
+        from app.db.models.conversation import Conversation
+        
+        conversation_data = {
+            "title": "테스트 대화",
+            "model": "claude-3",
+            "agent_type": "none",
+            "status": "active",
+            "metadata_": {}
+        }
+        conversation_data.update(kwargs)
+        
+        conversation = Conversation(**conversation_data)
+        session.add(conversation)
+        session.commit()
+        session.refresh(conversation)
+        return conversation
+    
+    @staticmethod
+    def create_test_message(session, conversation_id: str, **kwargs):
+        """테스트용 메시지 생성"""
+        from app.db.models.conversation import Message
+        
+        message_data = {
+            "conversation_id": conversation_id,
+            "role": "user",
+            "content": "테스트 메시지",
+            "model": "claude-3",
+            "metadata_": {}
+        }
+        message_data.update(kwargs)
+        
+        message = Message(**message_data)
+        session.add(message)
+        session.commit()
+        session.refresh(message)
+        return message
+    
+    @staticmethod
+    def create_test_feedback(session, message_id: str, **kwargs):
+        """테스트용 피드백 생성"""
+        from app.db.models.feedback import MessageFeedback
+        
+        feedback_data = {
+            "message_id": message_id,
+            "feedback_type": "thumbs",
+            "is_positive": True,
+            "category": "overall"
+        }
+        feedback_data.update(kwargs)
+        
+        feedback = MessageFeedback(**feedback_data)
+        session.add(feedback)
+        session.commit()
+        session.refresh(feedback)
+        return feedback
+
+
+@pytest.fixture
+def test_helpers():
+    """테스트 헬퍼 클래스"""
+    return TestHelpers
+
+
+# 테스트 마커 설정
+pytest.mark.unit = pytest.mark.unit
+pytest.mark.integration = pytest.mark.integration
+pytest.mark.slow = pytest.mark.slow
+pytest.mark.db = pytest.mark.db
+pytest.mark.api = pytest.mark.api
+pytest.mark.llm = pytest.mark.llm
+pytest.mark.cache = pytest.mark.cache

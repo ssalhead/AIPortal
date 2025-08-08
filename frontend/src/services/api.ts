@@ -72,6 +72,7 @@ class ApiService {
   // 채팅 메시지 전송 (세션 지원)
   async sendChatMessage(message: ChatMessageWithSession): Promise<ChatResponseWithSession> {
     const response = await this.client.post('/chat', message);
+    console.log('API 응답 받음:', response.data);
     return response.data;
   }
 
@@ -179,6 +180,11 @@ class ApiService {
   async executeAgent(request: AgentExecuteRequest): Promise<AgentExecuteResponse> {
     const response = await this.client.post('/agents/execute', request);
     return response.data;
+  }
+
+  // HTTP 클라이언트 노출 (다른 서비스에서 사용)
+  get httpClient() {
+    return this.client;
   }
 }
 

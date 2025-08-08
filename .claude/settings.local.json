@@ -41,7 +41,10 @@
       "Bash(ss:*)",
       "Bash(npm run dev:*)",
       "Bash(grep:*)",
-      "Bash(ss:*)"
+      "Bash(ss:*)",
+      "Bash(kill:*)",
+      "Bash(fuser:*)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "additionalDirectories": [

@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
 from app.core.security import verify_token, get_mock_user
+from app.db.session import SessionLocal
 
 # HTTP Bearer 토큰 스키마
 security = HTTPBearer(auto_error=False)
@@ -81,3 +82,17 @@ async def get_current_active_user(
             detail="비활성 사용자입니다"
         )
     return current_user
+
+
+def get_db():
+    """
+    데이터베이스 세션 의존성
+    
+    Yields:
+        데이터베이스 세션
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

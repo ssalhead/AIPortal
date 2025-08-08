@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import quote_plus
 import httpx
 from bs4 import BeautifulSoup
@@ -228,6 +228,37 @@ class SearchService:
             print(f"DuckDuckGo 검색 오류: {e}")
             return []
     
+    def _process_search_operators(self, query: str) -> Tuple[str, Dict[str, str]]:
+        """Google 검색 연산자 처리"""
+        processed_query = query
+        operators = {}
+        
+        # site: 연산자 처리
+        site_pattern = r'site:([^\s]+)'
+        site_match = re.search(site_pattern, query, re.IGNORECASE)
+        if site_match:
+            site_domain = site_match.group(1)
+            operators['site'] = site_domain
+            processed_query = re.sub(site_pattern, '', query, flags=re.IGNORECASE).strip()
+        
+        # inurl: 연산자 처리
+        inurl_pattern = r'inurl:([^\s]+)'
+        inurl_match = re.search(inurl_pattern, query, re.IGNORECASE)
+        if inurl_match:
+            url_part = inurl_match.group(1)
+            operators['inurl'] = url_part
+            processed_query = re.sub(inurl_pattern, '', query, flags=re.IGNORECASE).strip()
+        
+        # intitle: 연산자 처리  
+        intitle_pattern = r'intitle:([^\s]+)'
+        intitle_match = re.search(intitle_pattern, query, re.IGNORECASE)
+        if intitle_match:
+            title_part = intitle_match.group(1)
+            operators['intitle'] = title_part
+            processed_query = re.sub(intitle_pattern, '', query, flags=re.IGNORECASE).strip()
+        
+        return processed_query, operators
+
     async def search_google(
         self,
         query: str,
@@ -241,16 +272,27 @@ class SearchService:
             return []
         
         try:
+            # 검색 연산자 처리
+            processed_query, operators = self._process_search_operators(query)
+            
+            # site: 연산자가 있으면 원본 쿼리 사용 (Google이 직접 처리)
+            final_query = query if operators else processed_query
+            
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
                 "key": settings.GOOGLE_API_KEY,
                 "cx": settings.GOOGLE_CSE_ID,
-                "q": query,
+                "q": final_query,
                 "num": min(max_results, 10),  # Google API는 최대 10개까지
                 "hl": kwargs.get("language", "ko"),  # 한국어 인터페이스
                 "safe": "medium"  # SafeSearch 중간 수준
                 # searchType 제거 - 기본값이 웹 검색
             }
+            
+            # 검색 연산자 로깅
+            if operators:
+                print(f"Google 검색 연산자 사용: {operators}")
+                print(f"원본 쿼리: {query} → 처리된 쿼리: {processed_query}")
             
             response = await self.client.get(url, params=params, timeout=10.0)
             response.raise_for_status()
@@ -271,11 +313,23 @@ class SearchService:
                 if not link.startswith(("http://", "https://")):
                     continue
                 
+                # source에 연산자 정보 포함
+                source_info = f"google_{item.get('displayLink', 'unknown')}"
+                if operators:
+                    operator_tags = []
+                    if 'site' in operators:
+                        operator_tags.append(f"site:{operators['site']}")
+                    if 'inurl' in operators:
+                        operator_tags.append(f"inurl:{operators['inurl']}")
+                    if 'intitle' in operators:
+                        operator_tags.append(f"intitle:{operators['intitle']}")
+                    source_info += f"_{'_'.join(operator_tags)}"
+                
                 result = SearchResult(
                     title=item.get("title", "").strip(),
                     url=link,
                     snippet=item.get("snippet", "").strip(),
-                    source=f"google_{item.get('displayLink', 'unknown')}",
+                    source=source_info,
                     score=0.9 - (len(results) * 0.05)  # 순서에 따른 점수
                 )
                 

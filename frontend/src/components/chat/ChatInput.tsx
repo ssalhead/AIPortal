@@ -7,6 +7,7 @@ import type { LLMModel, AgentType, LLMProvider } from '../../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { useLoading } from '../../contexts/LoadingContext';
+import { useResponsive } from '../../hooks/useResponsive';
 import { Send, Paperclip, ChevronDown, Star, Zap } from 'lucide-react';
 
 interface ChatInputProps {
@@ -33,11 +34,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onAgentChange,
 }) => {
   const { isTyping, startTyping } = useLoading();
+  const { isMobile, isTablet } = useResponsive();
   const [message, setMessage] = useState('');
   const [showModelSelector, setShowModelSelector] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState<'top' | 'bottom'>('top');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownButtonRef = useRef<HTMLButtonElement>(null);
+  
+  // 모바일용 플레이스홀더
+  const mobilePlaceholder = isMobile ? "메시지 입력..." : placeholder;
 
   // 선택된 제공업체의 모델 목록 계산
   const availableModels = useMemo(() => {
@@ -149,18 +154,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           {/* 하단 액션 바 */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 dark:border-slate-700">
+          <div className={`flex items-center justify-between ${
+            isMobile ? 'px-3 py-2' : 'px-4 py-3'
+          } border-t border-slate-100 dark:border-slate-700`}>
             {/* 왼쪽: 도구들 */}
-            <div className="flex items-center space-x-2">
-              {/* 파일 업로드 버튼 */}
-              <button
-                type="button"
-                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200"
-                disabled={isLoading || isTyping}
-                title="파일 첨부"
-              >
-                <Paperclip className="w-5 h-5" />
-              </button>
+            <div className={`flex items-center ${isMobile ? 'space-x-1' : 'space-x-2'}`}>
+              {/* 파일 업로드 버튼 - 모바일에서는 숨김 */}
+              {!isMobile && (
+                <button
+                  type="button"
+                  className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200"
+                  disabled={isLoading || isTyping}
+                  title="파일 첨부"
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
+              )}
               
               {/* 모델/기능 선택 버튼 */}
               <div className="relative">
@@ -168,17 +177,28 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   type="button"
                   ref={dropdownButtonRef}
                   onClick={() => setShowModelSelector(!showModelSelector)}
-                  className="flex items-center space-x-2 px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200 text-sm"
+                  className={`flex items-center space-x-2 ${
+                    isMobile ? 'px-2 py-1' : 'px-3 py-1.5'
+                  } text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200 ${
+                    isMobile ? 'text-xs' : 'text-sm'
+                  }`}
                   title="모델 및 기능 선택"
                 >
-                  <span>AI 설정</span>
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showModelSelector ? 'rotate-180' : ''}`} />
+                  <span>{isMobile ? 'AI' : 'AI 설정'}</span>
+                  <ChevronDown className={`${isMobile ? 'w-3 h-3' : 'w-4 h-4'} transition-transform ${showModelSelector ? 'rotate-180' : ''}`} />
                 </button>
                 
                 {/* 모델 선택 드롭다운 */}
                 {showModelSelector && (
-                  <div className="absolute bottom-full mb-2 right-0 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 w-80 z-50 max-h-96 overflow-y-auto">
-                    <div className="space-y-4">
+                  <div className={`absolute bottom-full mb-2 ${
+                    isMobile ? 'right-0 left-0' : 'right-0'
+                  } bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 ${
+                    isMobile ? 'p-3' : 'p-4'
+                  } ${
+                    isMobile ? 'w-full' : 'w-80'
+                  } z-50 max-h-96 overflow-y-auto`}
+                >
+                  <div className="space-y-4">
                       {/* Provider 선택 */}
                       <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">

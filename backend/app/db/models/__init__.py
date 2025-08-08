@@ -2,6 +2,7 @@ from app.db.models.user import User
 from app.db.models.conversation import Conversation, Message
 from app.db.models.workspace import Workspace, Artifact
 from app.db.models.cache import CacheEntry
+from app.db.models.feedback import MessageFeedback, FeedbackAnalytics, UserFeedbackProfile
 
 __all__ = [
     "User",
@@ -9,5 +10,8 @@ __all__ = [
     "Message", 
     "Workspace",
     "Artifact",
-    "CacheEntry"
+    "CacheEntry",
+    "MessageFeedback",
+    "FeedbackAnalytics", 
+    "UserFeedbackProfile"
 ]

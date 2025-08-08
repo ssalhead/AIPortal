@@ -8,7 +8,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import asyncio
+import logging
 from asyncio import Queue
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_active_user
 from app.models.citation import CitedResponse
@@ -69,12 +72,13 @@ async def send_message(
         session_id=chat_message.session_id
     )
     
-    # 인용 정보 처리
-    citations = []
-    sources = []
+    # 인용 정보 처리 - 에이전트에서 직접 제공된 citations와 sources 사용
+    citations = result.get("citations", [])
+    sources = result.get("sources", [])
     citation_stats = None
     
-    if chat_message.include_citations and result.get("search_results"):
+    # 추가적인 citation 처리가 필요한 경우에만 CitationService 사용
+    if chat_message.include_citations and not citations and result.get("search_results"):
         citation_service = CitationService(logging_service)
         
         cited_response = await citation_service.extract_citations_from_response(
@@ -86,14 +90,21 @@ async def send_message(
         # Pydantic 모델을 딕셔너리로 변환
         citations = [citation.model_dump() for citation in cited_response.citations]
         sources = [source.model_dump() for source in cited_response.sources]
-        
-        # 통계 생성
-        if citations or sources:
-            stats = await citation_service.get_citation_stats(
-                cited_response.citations,
-                cited_response.sources
-            )
-            citation_stats = stats.model_dump()
+    
+    # 통계 생성
+    if citations or sources:
+        try:
+            from app.services.citation_service import CitationService
+            citation_service = CitationService(logging_service)
+            # 딕셔너리 형태의 citations를 적절히 처리
+            citation_stats = {
+                "total_citations": len(citations),
+                "total_sources": len(sources),
+                "avg_confidence": sum(c.get("score", 0.8) for c in citations) / len(citations) if citations else 0
+            }
+        except Exception as e:
+            logger.warning(f"Citation 통계 생성 실패: {e}")
+            citation_stats = None
     
     return ChatResponse(
         response=result["response"],
@@ -154,12 +165,13 @@ async def send_message_stream(
                 yield f"data: {json.dumps({'type': 'progress', 'data': progress_data})}\n\n"
                 await asyncio.sleep(0.1)  # 시각적 효과를 위한 짧은 지연
             
-            # 인용 정보 처리
-            citations = []
-            sources = []
+            # 인용 정보 처리 - 에이전트에서 직접 제공된 citations와 sources 사용
+            citations = result.get("citations", [])
+            sources = result.get("sources", [])
             citation_stats = None
             
-            if chat_message.include_citations and result.get("search_results"):
+            # 추가적인 citation 처리가 필요한 경우에만 CitationService 사용
+            if chat_message.include_citations and not citations and result.get("search_results"):
                 citation_service = CitationService(logging_service)
                 
                 cited_response = await citation_service.extract_citations_from_response(
@@ -170,13 +182,17 @@ async def send_message_stream(
                 
                 citations = [citation.model_dump() for citation in cited_response.citations]
                 sources = [source.model_dump() for source in cited_response.sources]
-                
-                if citations or sources:
-                    stats = await citation_service.get_citation_stats(
-                        cited_response.citations,
-                        cited_response.sources
-                    )
-                    citation_stats = stats.model_dump()
+            
+            # 통계 생성
+            if citations or sources:
+                try:
+                    citation_stats = {
+                        "total_citations": len(citations),
+                        "total_sources": len(sources),
+                        "avg_confidence": sum(c.get("score", 0.8) for c in citations) / len(citations) if citations else 0
+                    }
+                except Exception as e:
+                    citation_stats = None
             
             # 최종 결과 전송
             final_result = {

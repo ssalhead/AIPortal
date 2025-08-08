@@ -163,7 +163,9 @@ class AgentService:
                 "user_id": user_id,
                 "session_id": session.session_id,  # 세션 ID 반환
                 "metadata": result.metadata,
-                "execution_time_ms": result.execution_time_ms
+                "execution_time_ms": result.execution_time_ms,
+                "citations": getattr(result, 'citations', []),  # citations 추가
+                "sources": getattr(result, 'sources', [])  # sources 추가
             }
             
         except Exception as e:

@@ -36,6 +36,7 @@ class Conversation(Base):
     
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+    feedbacks = relationship("MessageFeedback", back_populates="conversation", cascade="all, delete-orphan")
 
 class Message(Base):
     __tablename__ = "messages"

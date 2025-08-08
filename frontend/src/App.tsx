@@ -9,6 +9,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { LoadingProvider } from './contexts/LoadingContext';
 import { Layout } from './components/layout/Layout';
 import { ChatPage } from './pages/ChatPage';
+import { ConversationHistoryPage } from './components/ConversationHistory/ConversationHistoryPage';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<ChatPage />} />
                 <Route path="/chat" element={<ChatPage />} />
+                <Route path="/history" element={<ConversationHistoryPage />} />
                 {/* 추후 추가될 라우트들 */}
                 {/* <Route path="/workspace" element={<WorkspacePage />} /> */}
                 {/* <Route path="/agents" element={<AgentsPage />} /> */}
