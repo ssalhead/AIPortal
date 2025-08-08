@@ -29,22 +29,39 @@ class AgentService:
         model: str = "auto",
         agent_type: str = "auto",
         user_id: str = "default_user",
-        context: Dict[str, Any] = None
+        session_id: str = None,
+        context: Dict[str, Any] = None,
+        progress_callback = None
     ) -> Dict[str, Any]:
         """
-        채팅 메시지 처리
+        채팅 메시지 처리 (대화 컨텍스트 지원)
         
         Args:
             message: 사용자 메시지
             model: 사용할 LLM 모델
             agent_type: 에이전트 타입 (auto는 supervisor가 자동 선택)
             user_id: 사용자 ID
+            session_id: 대화 세션 ID
             context: 추가 컨텍스트
+            progress_callback: 진행 상태 콜백
             
         Returns:
             처리 결과
         """
         try:
+            from app.services.conversation_service import conversation_service
+            
+            # 대화 세션 관리
+            session = await conversation_service.get_or_create_session(user_id, session_id)
+            
+            # 사용자 메시지를 대화 히스토리에 추가
+            await conversation_service.add_message(
+                session_id=session.session_id,
+                role="user",
+                content=message,
+                user_id=user_id
+            )
+            
             # LLM 라우터를 통한 최적 모델 선택
             from app.agents.llm_router import llm_router
             
@@ -59,11 +76,24 @@ class AgentService:
             else:
                 selected_model = model
             
+            # 대화 컨텍스트 가져오기
+            conversation_context = await conversation_service.get_conversation_context(
+                session_id=session.session_id,
+                user_id=user_id,
+                max_tokens=4000
+            )
+            
+            # 컨텍스트가 있으면 메시지에 포함
+            enhanced_message = message
+            if conversation_context:
+                enhanced_message = f"{conversation_context}\n{message}"
+            
             # 입력 데이터 생성
             agent_input = AgentInput(
-                query=message,
-                context=context or {},
-                user_id=user_id
+                query=enhanced_message,
+                context=context or {"has_conversation_context": bool(conversation_context)},
+                user_id=user_id,
+                session_id=session.session_id
             )
             
             # 에이전트 선택 및 실행
@@ -76,10 +106,10 @@ class AgentService:
                     user_id=user_id
                 )
                 
-                # AgentResult 형태로 변환
-                from app.agents.base import AgentResult
+                # AgentOutput 형태로 변환
+                from app.agents.base import AgentOutput
                 from datetime import datetime
-                result = AgentResult(
+                result = AgentOutput(
                     agent_id="direct_llm",
                     result=response_text,
                     model_used=actual_model,
@@ -87,15 +117,41 @@ class AgentService:
                     metadata={"mode": "direct_chat"},
                     execution_time_ms=0  # 실제 측정은 추후 구현
                 )
+                
+                # AI 응답을 대화 히스토리에 추가
+                await conversation_service.add_message(
+                    session_id=session.session_id,
+                    role="assistant", 
+                    content=response_text,
+                    user_id=user_id,
+                    metadata={
+                        "agent_used": "direct_llm",
+                        "model_used": actual_model,
+                        "mode": "direct_chat"
+                    }
+                )
             elif agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
-                result = await self.supervisor.execute(agent_input, selected_model)
+                result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
             else:
                 # 특정 에이전트 직접 실행
                 agent = self.agents.get(agent_type)
                 if not agent:
                     raise ValueError(f"알 수 없는 에이전트 타입: {agent_type}")
-                result = await agent.execute(agent_input, selected_model)
+                result = await agent.execute(agent_input, selected_model, progress_callback)
+            
+            # AI 응답을 대화 히스토리에 추가
+            await conversation_service.add_message(
+                session_id=session.session_id,
+                role="assistant",
+                content=result.result,
+                user_id=user_id,
+                metadata={
+                    "agent_used": result.agent_id,
+                    "model_used": result.model_used,
+                    "execution_time_ms": result.execution_time_ms
+                }
+            )
             
             return {
                 "response": result.result,
@@ -103,6 +159,7 @@ class AgentService:
                 "model_used": result.model_used,
                 "timestamp": result.timestamp,
                 "user_id": user_id,
+                "session_id": session.session_id,  # 세션 ID 반환
                 "metadata": result.metadata,
                 "execution_time_ms": result.execution_time_ms
             }

@@ -12,9 +12,9 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-neutral-25 to-neutral-50">
+    <div className="h-screen flex flex-col bg-gradient-to-b from-neutral-25 to-neutral-50">
       <Header />
-      <main className="flex-1 relative">
+      <main className="flex-1 relative overflow-hidden min-h-0">
         {children}
       </main>
       <GlobalLoadingOverlay />

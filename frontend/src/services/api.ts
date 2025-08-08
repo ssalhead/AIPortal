@@ -12,6 +12,14 @@ import type {
   AgentExecuteResponse 
 } from '../types';
 
+export interface ChatMessageWithSession extends ChatMessage {
+  session_id?: string | null;
+}
+
+export interface ChatResponseWithSession extends ChatResponse {
+  session_id?: string | null;
+}
+
 class ApiService {
   private client: ReturnType<typeof axios.create>;
 
@@ -61,10 +69,92 @@ class ApiService {
     return response.data;
   }
 
-  // 채팅 메시지 전송
-  async sendChatMessage(message: ChatMessage): Promise<ChatResponse> {
+  // 채팅 메시지 전송 (세션 지원)
+  async sendChatMessage(message: ChatMessageWithSession): Promise<ChatResponseWithSession> {
     const response = await this.client.post('/chat', message);
     return response.data;
+  }
+
+  // 실시간 진행 상태와 함께 채팅 메시지 전송 (SSE)
+  async sendChatMessageWithProgress(
+    message: ChatMessage,
+    onProgress: (step: string, progress: number) => void,
+    onResult: (result: ChatResponse) => void,
+    onError: (error: string) => void
+  ): Promise<void> {
+    const url = `${this.client.defaults.baseURL}/chat/stream`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        // SSE 메시지 파싱
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 마지막 불완전한 줄은 버퍼에 보관
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const eventData = JSON.parse(line.substring(6));
+              
+              switch (eventData.type) {
+                case 'start':
+                  console.log('채팅 시작:', eventData.data.message);
+                  break;
+                  
+                case 'progress':
+                  onProgress(eventData.data.step, eventData.data.progress);
+                  break;
+                  
+                case 'result':
+                  onResult(eventData.data);
+                  break;
+                  
+                case 'end':
+                  console.log('채팅 완료:', eventData.data.message);
+                  return;
+                  
+                case 'error':
+                  onError(eventData.data.message);
+                  return;
+                  
+                default:
+                  console.log('Unknown event type:', eventData.type);
+              }
+            } catch (parseError) {
+              console.error('SSE 메시지 파싱 오류:', parseError);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('SSE 연결 오류:', error);
+      onError(error instanceof Error ? error.message : 'SSE 연결에 실패했습니다.');
+    }
   }
 
   // 채팅 히스토리 조회

@@ -6,7 +6,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ChatMessage } from '../components/chat/ChatMessage';
 import { ChatInput } from '../components/chat/ChatInput';
-import { Header } from '../components/layout/Header';
 import { Sidebar } from '../components/layout/Sidebar';
 import { WelcomeScreen } from '../components/ui/WelcomeScreen';
 import { ToastContainer, useToast } from '../components/ui/Toast';
@@ -29,6 +28,11 @@ interface Message {
   model?: string;
   citations?: Citation[];
   sources?: Source[];
+  searchStatus?: {
+    isSearching: boolean;
+    currentStep: string;
+    progress: number;
+  };
 }
 
 export const ChatPage: React.FC = () => {
@@ -38,10 +42,16 @@ export const ChatPage: React.FC = () => {
   const [selectedAgent, setSelectedAgent] = useState<AgentType>('none');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [chatWidth, setChatWidth] = useState(70); // 채팅 영역 비율 (%) - 7:3 비율
+  const [searchProgress, setSearchProgress] = useState<{
+    isSearching: boolean;
+    currentStep: string;
+    progress: number;
+  } | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);
-  const { isTyping, stopTyping, currentModel } = useLoading();
+  const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const { 
     toasts, 
     removeToast, 
@@ -58,22 +68,20 @@ export const ChatPage: React.FC = () => {
     staleTime: 0, // 항상 최신 데이터 요청
   });
 
-  // 메시지 전송 뮤테이션
+  // 메시지 전송 뮤테이션 (기본 버전 - 백업용)
   const sendMessageMutation = useMutation({
-    mutationFn: (messageData: { message: string; model: string; agent_type: string }) =>
+    mutationFn: (messageData: { message: string; model: string; agent_type: string; session_id?: string | null }) =>
       apiService.sendChatMessage(messageData),
     onSuccess: (response, variables) => {
       // 타이핑 상태 종료
       stopTyping();
+      setSearchProgress(null);
       
-      // 사용자 메시지 추가
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        content: variables.message,
-        isUser: true,
-        timestamp: new Date().toISOString(),
-      };
-
+      // 세션 ID 업데이트 (새 세션인 경우)
+      if (response.session_id && response.session_id !== currentSessionId) {
+        setCurrentSessionId(response.session_id);
+      }
+      
       // AI 응답 추가 (인용 정보 포함)
       const aiMessage: Message = {
         id: `ai-${Date.now()}`,
@@ -86,12 +94,13 @@ export const ChatPage: React.FC = () => {
         sources: response.sources || [],
       };
 
-      setMessages(prev => [...prev, userMessage, aiMessage]);
+      setMessages(prev => [...prev, aiMessage]);
       showSuccess('메시지가 성공적으로 전송되었습니다.');
     },
     onError: (error: any) => {
       // 타이핑 상태 종료
       stopTyping();
+      setSearchProgress(null);
       
       console.error('메시지 전송 실패:', error);
       
@@ -155,16 +164,135 @@ export const ChatPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = (message: string, model: LLMModel, agentType: AgentType) => {
-    sendMessageMutation.mutate({
-      message,
-      model,
-      agent_type: agentType,
-    });
+  const handleSendMessage = async (message: string, model: LLMModel, agentType: AgentType) => {
+    // 웹 검색 에이전트인 경우 진행 상태 시뮬레이션
+    if (agentType === 'web_search') {
+      // 타이핑 시작
+      startTyping(`${model} 모델로 웹 검색 중...`, model);
+      
+      // 사용자 메시지 먼저 추가
+      const userMessage: Message = {
+        id: `user-${Date.now()}`,
+        content: message,
+        isUser: true,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, userMessage]);
+
+      // 검색 진행 상태 시뮬레이션
+      const simulateProgress = () => {
+        const steps = [
+          { step: '검색어 분석 중...', progress: 10, delay: 500 },
+          { step: '웹 검색 중...', progress: 40, delay: 1000 },
+          { step: '검색 결과 분석 중...', progress: 70, delay: 1500 },
+          { step: 'AI 분석 및 답변 생성 중...', progress: 90, delay: 2000 },
+        ];
+        
+        let currentIndex = 0;
+        
+        const updateProgress = () => {
+          if (currentIndex < steps.length) {
+            const { step, progress } = steps[currentIndex];
+            setSearchProgress({
+              isSearching: true,
+              currentStep: step,
+              progress: progress,
+            });
+            currentIndex++;
+            setTimeout(updateProgress, steps[currentIndex - 1]?.delay || 500);
+          }
+        };
+        
+        // 즉시 첫 번째 단계 시작
+        setSearchProgress({
+          isSearching: true,
+          currentStep: '검색 준비 중...',
+          progress: 0,
+        });
+        
+        setTimeout(updateProgress, 300);
+      };
+
+      // 진행 상태 시뮬레이션 시작
+      simulateProgress();
+
+      try {
+        const response = await apiService.sendChatMessage({
+          message,
+          model,
+          agent_type: agentType,
+          session_id: currentSessionId,
+        });
+
+        // 검색 진행 상태 및 타이핑 인디케이터 종료
+        setSearchProgress(null);
+        stopTyping();
+        
+        // 세션 ID 업데이트 (새 세션인 경우)
+        if (response.session_id && response.session_id !== currentSessionId) {
+          setCurrentSessionId(response.session_id);
+        }
+        
+        // AI 응답 추가 (인용 정보 포함)
+        const aiMessage: Message = {
+          id: `ai-${Date.now()}`,
+          content: response.response,
+          isUser: false,
+          timestamp: response.timestamp,
+          agentType: response.agent_used,
+          model: response.model_used,
+          citations: response.citations || [],
+          sources: response.sources || [],
+        };
+
+        setMessages(prev => [...prev, aiMessage]);
+        showSuccess('메시지가 성공적으로 전송되었습니다.');
+        
+      } catch (error: any) {
+        // 검색 진행 상태 및 타이핑 인디케이터 종료
+        setSearchProgress(null);
+        stopTyping();
+        
+        // 에러 메시지 추가
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          content: '죄송합니다. 메시지 처리 중 오류가 발생했습니다.',
+          isUser: false,
+          timestamp: new Date().toISOString(),
+          agentType: 'error',
+          model: 'system',
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        
+        const errorMsg = error?.response?.data?.message || '메시지 전송 중 오류가 발생했습니다.';
+        showError(errorMsg);
+      }
+    } else {
+      // 기타 에이전트는 기존 방식 사용
+      // 타이핑 시작
+      startTyping(`${model} 모델로 응답 생성 중...`, model);
+      
+      // 사용자 메시지 먼저 추가
+      const userMessage: Message = {
+        id: `user-${Date.now()}`,
+        content: message,
+        isUser: true,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, userMessage]);
+      
+      sendMessageMutation.mutate({
+        message,
+        model,
+        agent_type: agentType,
+        session_id: currentSessionId,
+      });
+    }
   };
 
   const handleNewChat = () => {
     setMessages([]);
+    setCurrentSessionId(null); // 새 세션 시작
     showInfo('새 대화를 시작합니다.');
   };
 
@@ -204,12 +332,9 @@ export const ChatPage: React.FC = () => {
 
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900">
       {/* Toast 컨테이너 */}
       <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
-      
-      {/* 헤더 */}
-      <Header />
       
       {/* 메인 콘텐츠 - 3열 레이아웃 */}
       <div ref={containerRef} className="flex flex-1 overflow-hidden">
@@ -300,8 +425,17 @@ export const ChatPage: React.FC = () => {
                         />
                       ))}
                       
-                      {/* 타이핑 인디케이터 */}
-                      {isTyping && (
+                      {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
+                      {searchProgress && (
+                        <ChatMessage
+                          message=""
+                          isUser={false}
+                          searchStatus={searchProgress}
+                          model={selectedModel}
+                        />
+                      )}
+                      
+                      {!searchProgress && isTyping && (
                         <ChatMessage
                           message=""
                           isUser={false}
@@ -316,8 +450,8 @@ export const ChatPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* 채팅 입력 영역 */}
-              <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              {/* 채팅 입력 영역 - 하단 고정 */}
+              <div className="flex-shrink-0 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                 <ChatInput
                   onSendMessage={handleSendMessage}
                   isLoading={sendMessageMutation.isPending}
@@ -419,8 +553,17 @@ export const ChatPage: React.FC = () => {
                       />
                     ))}
                     
-                    {/* 타이핑 인디케이터 */}
-                    {isTyping && (
+                    {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
+                    {searchProgress && (
+                      <ChatMessage
+                        message=""
+                        isUser={false}
+                        searchStatus={searchProgress}
+                        model={selectedModel}
+                      />
+                    )}
+                    
+                    {!searchProgress && isTyping && (
                       <ChatMessage
                         message=""
                         isUser={false}
@@ -435,8 +578,8 @@ export const ChatPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 채팅 입력 영역 */}
-            <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+            {/* 채팅 입력 영역 - 하단 고정 */}
+            <div className="flex-shrink-0 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
               <ChatInput
                 onSendMessage={handleSendMessage}
                 isLoading={sendMessageMutation.isPending}

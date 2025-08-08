@@ -20,11 +20,13 @@ export const Header: React.FC = () => {
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center">
                 <Zap className="w-5 h-5 text-white" />
               </div>
-              <div className="flex flex-col">
-                <h1 className="text-lg font-bold bg-gradient-to-r from-primary-600 to-primary-700 text-transparent bg-clip-text">
+              <div className="flex items-center space-x-2">
+                <h1 className="text-xl font-bold bg-gradient-to-r from-primary-600 to-primary-700 text-transparent bg-clip-text">
                   AI Portal
                 </h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">차세대 지능형 플랫폼</p>
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  v2.0
+                </span>
               </div>
             </div>
           </div>

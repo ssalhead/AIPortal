@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { TypingIndicator } from '../ui/TypingIndicator';
 import { Citation, CitationPreview } from '../citation/Citation';
 import { SourceList } from '../citation/SourceList';
-import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap } from 'lucide-react';
+import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from 'lucide-react';
 import type { Citation as CitationData, Source as SourceData } from '../../types';
 
 interface ChatMessageProps {
@@ -19,6 +19,12 @@ interface ChatMessageProps {
   isTyping?: boolean;
   /** 로딩 중인지 여부 */
   isLoading?: boolean;
+  /** 검색 진행 상태 */
+  searchStatus?: {
+    isSearching: boolean;
+    currentStep: string;
+    progress: number;
+  };
   /** 인용 정보 */
   citations?: CitationData[];
   /** 출처 정보 */
@@ -35,6 +41,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   model,
   isTyping = false,
   isLoading = false,
+  searchStatus,
   citations = [],
   sources = [],
   citationMode = 'preview',
@@ -55,8 +62,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const handleRating = (type: 'up' | 'down') => {
     setRating(rating === type ? null : type);
   };
-  // 타이핑 중이면 타이핑 인디케이터 표시
-  if (isTyping && !isUser) {
+  // 검색 중이거나 타이핑 중이면 진행 상태 표시
+  if ((searchStatus?.isSearching || isTyping) && !isUser) {
     return (
       <div className="flex items-start space-x-3 max-w-4xl">
         {/* AI 아바타 */}
@@ -64,20 +71,58 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           <Bot className="w-4 h-4 text-slate-600 dark:text-slate-300" />
         </div>
         
-        {/* 타이핑 버블 */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl rounded-tl-lg px-6 py-4 shadow-sm border border-slate-200 dark:border-slate-700 max-w-xs">
-          <div className="flex items-center space-x-1">
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-              <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+        {/* 진행 상태 버블 */}
+        <div className="bg-white dark:bg-slate-800 rounded-3xl rounded-tl-lg px-6 py-4 shadow-sm border border-slate-200 dark:border-slate-700 min-w-0 flex-1 max-w-md">
+          {searchStatus?.isSearching ? (
+            <div className="space-y-3">
+              {/* 검색 단계 표시 */}
+              <div className="flex items-center space-x-2">
+                <Search className="w-4 h-4 text-blue-500 animate-pulse" />
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  웹 검색 중...
+                </span>
+              </div>
+              
+              {/* 현재 단계 */}
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                {searchStatus.currentStep}
+              </div>
+              
+              {/* 진행률 바 */}
+              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                <div 
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${searchStatus.progress}%` }}
+                />
+              </div>
+              
+              {/* 모델 정보 */}
+              {model && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">
+                    {model.replace('claude', 'Claude').replace('gemini', 'Gemini')}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {Math.round(searchStatus.progress)}%
+                  </span>
+                </div>
+              )}
             </div>
-            {model && (
-              <span className="text-xs text-slate-500 ml-2">
-                {model.replace('claude', 'Claude').replace('gemini', 'Gemini')}
-              </span>
-            )}
-          </div>
+          ) : (
+            /* 기본 타이핑 인디케이터 */
+            <div className="flex items-center space-x-1">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+              </div>
+              {model && (
+                <span className="text-xs text-slate-500 ml-2">
+                  {model.replace('claude', 'Claude').replace('gemini', 'Gemini')}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );

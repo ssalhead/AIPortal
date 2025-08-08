@@ -29,7 +29,7 @@ class WebSearchAgent(BaseAgent):
             description="웹에서 정보를 검색하고 요약합니다"
         )
     
-    async def execute(self, input_data: AgentInput, model: str = "gemini") -> AgentOutput:
+    async def execute(self, input_data: AgentInput, model: str = "gemini", progress_callback=None) -> AgentOutput:
         """웹 검색 실행 (개선된 버전 - 캐싱 지원)"""
         start_time = time.time()
         
@@ -38,10 +38,14 @@ class WebSearchAgent(BaseAgent):
         
         async with AsyncSessionLocal() as session:
             try:
-                # 검색어 추출 및 정제
+                # 1단계: 검색어 추출 및 정제 (10%)
+                if progress_callback:
+                    progress_callback("검색어 분석 중...", 10)
                 search_query = await self._extract_search_query(input_data.query, model)
                 
-                # 새로운 검색 서비스를 사용한 웹 검색
+                # 2단계: 웹 검색 실행 (40%)
+                if progress_callback:
+                    progress_callback(f"'{search_query}' 검색 중...", 40)
                 search_results = await search_service.search_web(
                     query=search_query,
                     max_results=5,
@@ -49,14 +53,18 @@ class WebSearchAgent(BaseAgent):
                     session=session
                 )
                 
-                # 검색 결과 요약 (검색 서비스의 요약 기능 사용)
+                # 3단계: 검색 결과 요약 (70%)
+                if progress_callback:
+                    progress_callback("검색 결과 분석 중...", 70)
                 summary = await search_service.summarize_results(
                     query=input_data.query,
                     results=search_results,
                     session=session
                 )
                 
-                # LLM을 사용한 추가 분석
+                # 4단계: LLM을 사용한 추가 분석 (90%)
+                if progress_callback:
+                    progress_callback("AI 분석 및 답변 생성 중...", 90)
                 enhanced_summary = await self._enhance_summary(
                     original_query=input_data.query,
                     search_summary=summary,

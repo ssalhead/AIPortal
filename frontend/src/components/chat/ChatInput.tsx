@@ -2,7 +2,7 @@
  * 채팅 입력 컴포넌트 - Gemini 스타일
  */
 
-import React, { useState, useRef, KeyboardEvent, useMemo } from 'react';
+import React, { useState, useRef, KeyboardEvent, useMemo, useEffect } from 'react';
 import type { LLMModel, AgentType, LLMProvider } from '../../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
@@ -35,7 +35,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const { isTyping, startTyping } = useLoading();
   const [message, setMessage] = useState('');
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState<'top' | 'bottom'>('top');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dropdownButtonRef = useRef<HTMLButtonElement>(null);
 
   // 선택된 제공업체의 모델 목록 계산
   const availableModels = useMemo(() => {
@@ -54,9 +56,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim() && !isLoading && !isTyping) {
-      // 타이핑 시작
-      startTyping(`${selectedModel} 모델로 응답 생성 중...`, selectedModel);
-      
       onSendMessage(message.trim(), selectedModel, selectedAgent);
       setMessage('');
       if (textareaRef.current) {
@@ -83,9 +82,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   return (
-    <div className="px-6 py-4">
+    <div className="px-6 py-3">
       {/* 선택된 모델 정보 및 기능 정보 - 컴팩한 표시 */}
-      <div className="mb-4">
+      <div className="mb-3">
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center space-x-4">
             {/* 모델 표시 */}
@@ -167,6 +166,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <div className="relative">
                 <button
                   type="button"
+                  ref={dropdownButtonRef}
                   onClick={() => setShowModelSelector(!showModelSelector)}
                   className="flex items-center space-x-2 px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200 text-sm"
                   title="모델 및 기능 선택"
@@ -177,7 +177,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 
                 {/* 모델 선택 드롭다운 */}
                 {showModelSelector && (
-                  <div className="absolute bottom-full mb-2 left-0 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 min-w-80 z-50">
+                  <div className="absolute bottom-full mb-2 right-0 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 w-80 z-50 max-h-96 overflow-y-auto">
                     <div className="space-y-4">
                       {/* Provider 선택 */}
                       <div>
@@ -323,13 +323,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         </div>
         
-        {/* 도움말 텍스트 */}
-        <div className="flex items-center justify-center mt-3 text-xs text-slate-400 dark:text-slate-500 space-x-4">
+        {/* 도움말 텍스트 - 컴팩트 버전 */}
+        <div className="flex items-center justify-center mt-2 text-xs text-slate-400 dark:text-slate-500 space-x-3">
           <span>Enter로 전송</span>
-          <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+          <div className="w-0.5 h-0.5 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
           <span>Shift+Enter로 줄바꿈</span>
-          <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
-          <span>파일 드래그 및 드롭 지원</span>
         </div>
       </form>
       

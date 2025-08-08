@@ -39,7 +39,7 @@ class SupervisorAgent(BaseAgent):
             # TaskType.MULTIMODAL_RAG: multimodal_rag_agent,  # 추후 구현
         }
     
-    async def execute(self, input_data: AgentInput, model: str = "gemini") -> AgentOutput:
+    async def execute(self, input_data: AgentInput, model: str = "gemini", progress_callback=None) -> AgentOutput:
         """Supervisor 에이전트 실행"""
         start_time = time.time()
         
@@ -54,9 +54,9 @@ class SupervisorAgent(BaseAgent):
             worker_agent = self._select_worker(task_type)
             
             if worker_agent:
-                # Worker 에이전트 실행
+                # Worker 에이전트 실행 (progress_callback 전달)
                 self.logger.info(f"작업을 {task_type.value} 에이전트에게 위임")
-                result = await worker_agent.execute(input_data, model)
+                result = await worker_agent.execute(input_data, model, progress_callback)
                 
                 # Supervisor 메타데이터 추가
                 result.metadata["supervisor_decision"] = task_type.value

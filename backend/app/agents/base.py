@@ -3,7 +3,7 @@ AI 에이전트 베이스 클래스
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 from pydantic import BaseModel
 from datetime import datetime
 import logging
@@ -20,7 +20,7 @@ class AgentInput(BaseModel):
 
 
 class AgentOutput(BaseModel):
-    """에이전트 출력 데이터 모델"""
+    """에이전트 출력 데이터 모델 - 모든 에이전트 실행 결과의 표준 형식"""
     result: str
     metadata: Dict[str, Any]
     execution_time_ms: int
@@ -39,13 +39,19 @@ class BaseAgent(ABC):
         self.logger = logging.getLogger(f"{__name__}.{agent_id}")
     
     @abstractmethod
-    async def execute(self, input_data: AgentInput, model: str = "gemini") -> AgentOutput:
+    async def execute(
+        self, 
+        input_data: AgentInput, 
+        model: str = "gemini",
+        progress_callback: Optional[Callable[[str, int], None]] = None
+    ) -> AgentOutput:
         """
         에이전트 실행 메서드
         
         Args:
             input_data: 입력 데이터
             model: 사용할 LLM 모델
+            progress_callback: 진행 상태 콜백 함수 (단계명, 진행률)
             
         Returns:
             에이전트 실행 결과
