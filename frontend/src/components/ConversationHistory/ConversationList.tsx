@@ -5,10 +5,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Filter, RotateCcw, Plus, AlertCircle, Loader2 } from 'lucide-react';
 import { ConversationListItem } from './ConversationListItem';
-import { 
-  ConversationSummary, 
-  conversationHistoryService 
+import type { 
+  ConversationSummary
 } from '../../services/conversationHistoryService';
+import { conversationHistoryService } from '../../services/conversationHistoryService';
 import { useToast } from '../ui/Toast';
 
 interface ConversationListProps {
@@ -30,11 +30,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('active');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ACTIVE' | 'ARCHIVED'>('ACTIVE');
   
   const { showError, showSuccess, showInfo } = useToast();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<number>();
 
   // 초기 대화 목록 로드
   useEffect(() => {
@@ -70,7 +70,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       const params = {
         skip: reset ? 0 : conversations.length,
         limit: 20,
-        status: statusFilter === 'all' ? undefined : statusFilter as any
+        status: statusFilter === 'all' ? undefined : statusFilter as 'ACTIVE' | 'ARCHIVED'
       };
 
       const response = await conversationHistoryService.getConversations(params);
@@ -159,7 +159,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   const handleArchiveConversation = async (conversation: ConversationSummary) => {
     try {
       await conversationHistoryService.updateConversation(conversation.id, {
-        status: 'archived'
+        status: 'ARCHIVED'
       });
       
       setConversations(prev => prev.filter(c => c.id !== conversation.id));
@@ -240,8 +240,8 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               px-2 py-1 focus:ring-2 focus:ring-blue-500 focus:border-transparent
             "
           >
-            <option value="active">활성 대화</option>
-            <option value="archived">보관된 대화</option>
+            <option value="ACTIVE">활성 대화</option>
+            <option value="ARCHIVED">보관된 대화</option>
             <option value="all">모든 대화</option>
           </select>
 
@@ -307,7 +307,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                 isSelected={conversation.id === selectedConversationId}
                 onSelect={onSelectConversation}
                 onEdit={handleEditConversation}
-                onArchive={statusFilter === 'active' ? handleArchiveConversation : undefined}
+                onArchive={statusFilter === 'ACTIVE' ? handleArchiveConversation : undefined}
                 onDelete={handleDeleteConversation}
               />
             ))}

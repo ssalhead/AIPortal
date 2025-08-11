@@ -2,13 +2,13 @@
  * 채팅 입력 컴포넌트 - Gemini 스타일
  */
 
-import React, { useState, useRef, KeyboardEvent, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import type { LLMModel, AgentType, LLMProvider } from '../../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
-import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { useLoading } from '../../contexts/LoadingContext';
 import { useResponsive } from '../../hooks/useResponsive';
-import { Send, Paperclip, ChevronDown, Star, Zap } from 'lucide-react';
+import { Send, Paperclip, ChevronDown, Star, Zap, X } from 'lucide-react';
+import { fileService } from '../../services/fileService';
 
 interface ChatInputProps {
   onSendMessage: (message: string, model: LLMModel, agentType: AgentType) => void;
@@ -33,13 +33,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onModelChange,
   onAgentChange,
 }) => {
-  const { isTyping, startTyping } = useLoading();
-  const { isMobile, isTablet } = useResponsive();
+  const { isTyping } = useLoading();
+  const { isMobile } = useResponsive();
   const [message, setMessage] = useState('');
   const [showModelSelector, setShowModelSelector] = useState(false);
-  const [dropdownPosition, setDropdownPosition] = useState<'top' | 'bottom'>('top');
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownButtonRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // 모바일용 플레이스홀더
   const mobilePlaceholder = isMobile ? "메시지 입력..." : placeholder;
@@ -58,10 +59,32 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && !isLoading && !isTyping) {
-      onSendMessage(message.trim(), selectedModel, selectedAgent);
+    if ((message.trim() || attachedFiles.length > 0) && !isLoading && !isTyping) {
+      let messageToSend = message.trim();
+      
+      // 파일이 첨부된 경우 파일 업로드 먼저 수행
+      if (attachedFiles.length > 0) {
+        try {
+          const uploadResults = await fileService.uploadFiles(attachedFiles);
+          const fileList = uploadResults.map(result => 
+            `📎 ${result.original_name} (${fileService.formatFileSize(result.file_size)})`
+          ).join('\n');
+          
+          messageToSend = messageToSend 
+            ? `${messageToSend}\n\n첨부 파일:\n${fileList}`
+            : `첨부 파일:\n${fileList}`;
+          
+          setAttachedFiles([]);
+        } catch (error) {
+          console.error('파일 업로드 실패:', error);
+          alert('파일 업로드에 실패했습니다.');
+          return;
+        }
+      }
+      
+      onSendMessage(messageToSend, selectedModel, selectedAgent);
       setMessage('');
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -69,7 +92,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -83,6 +106,31 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+    }
+  };
+
+  // 파일 선택 핸들러
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const newFiles = Array.from(files);
+      setAttachedFiles(prev => [...prev, ...newFiles]);
+    }
+    // 입력 값 리셋
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // 파일 제거 핸들러
+  const removeFile = (index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // 파일 첨부 버튼 클릭
+  const handleAttachClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
     }
   };
 
@@ -133,6 +181,41 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
       </div>
 
+      {/* 첨부된 파일 미리보기 */}
+      {attachedFiles.length > 0 && (
+        <div className="mb-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              첨부 파일 ({attachedFiles.length})
+            </span>
+          </div>
+          
+          <div className="space-y-2">
+            {attachedFiles.map((file, index) => (
+              <div key={index} className="flex items-center justify-between bg-white dark:bg-slate-700 rounded-md p-2">
+                <div className="flex items-center space-x-2 flex-1 min-w-0">
+                  <Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
+                    {file.name}
+                  </span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400 flex-shrink-0">
+                    ({fileService.formatFileSize(file.size)})
+                  </span>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => removeFile(index)}
+                  className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0 ml-2"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 메시지 입력 영역 - Gemini 스타일 */}
       <form onSubmit={handleSubmit}>
         <div className="relative bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all duration-200 focus-within:border-primary-500 dark:focus-within:border-primary-400 focus-within:ring-4 focus-within:ring-primary-500/10">
@@ -163,6 +246,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               {!isMobile && (
                 <button
                   type="button"
+                  onClick={handleAttachClick}
                   className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200"
                   disabled={isLoading || isTyping}
                   title="파일 첨부"
@@ -350,6 +434,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <span>Shift+Enter로 줄바꿈</span>
         </div>
       </form>
+      
+      {/* 숨겨진 파일 입력 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".txt,.pdf,.docx,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.gif,.webp,.json,.md,.html,.py,.js,.ts"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
       
       {/* 모델/기능 선택 모달 - 필요시 추가 */}
       {/* TODO: 모델 선택 모달 구현 */}

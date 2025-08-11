@@ -35,27 +35,42 @@ class ConversationHistoryService:
     ) -> Dict[str, Any]:
         """사용자 대화 목록 조회 (캐싱 적용)"""
         try:
-            # 지능형 캐시 먼저 확인
-            cache_key = f"user_conversations:{user_id}:{skip}:{limit}"
-            conversations = await self.intelligent_cache.get(cache_key, user_id, session)
+            # 직접 데이터베이스에서 조회 (캐시 우회)
+            conversation_repo = ConversationRepository(session)
+            conversations_raw = await conversation_repo.get_user_conversations(
+                user_id=user_id,
+                status=status,
+                skip=skip,
+                limit=limit
+            )
             
-            if conversations is None:
-                # 기존 캐시 매니저에서 조회
-                conversations = await self.cache_manager.get_user_conversations(
-                    user_id=user_id,
-                    session=session,
-                    limit=limit,
-                    skip=skip
+            conversations = []
+            for conv in conversations_raw:
+                # 메시지 개수 계산
+                message_repo = MessageRepository(session)
+                messages = await message_repo.get_conversation_messages(
+                    conversation_id=str(conv.id),
+                    limit=1  # 최신 메시지 1개만
                 )
                 
-                # 지능형 캐시에 저장
-                if conversations:
-                    await self.intelligent_cache.set(
-                        cache_key, conversations, user_id, session, ttl_seconds=300
-                    )
+                last_message = messages[0] if messages else None
+                message_count = len(await message_repo.get_conversation_messages(str(conv.id), limit=1000))
+                
+                conversations.append({
+                    'id': str(conv.id),
+                    'title': conv.title,
+                    'model': conv.model,
+                    'agent_type': conv.agent_type,
+                    'status': conv.status.value,
+                    'created_at': conv.created_at.isoformat(),
+                    'updated_at': conv.updated_at.isoformat(),
+                    'message_count': message_count,
+                    'last_message_at': last_message.created_at.isoformat() if last_message else None,
+                    'last_message_preview': last_message.content[:100] if last_message else ''
+                })
             
-            # 총 개수 조회 (캐싱)
-            total_count = await self._get_total_conversation_count(user_id, session, status)
+            # 총 개수 조회
+            total_count = len(conversations_raw)
             
             return {
                 'conversations': conversations,
@@ -81,9 +96,9 @@ class ConversationHistoryService:
         try:
             # 대화 기본 정보 조회
             conversation_repo = ConversationRepository(session)
-            conversation = await conversation_repo.get_by_id(conversation_id)
+            conversation = await conversation_repo.get(conversation_id)
             
-            if not conversation or conversation.user_id != user_id:
+            if not conversation or str(conversation.user_id) != str(user_id):
                 return None
             
             # 메시지 조회 (캐싱 적용)
@@ -213,9 +228,9 @@ class ConversationHistoryService:
         try:
             # 대화 소유권 확인
             conversation_repo = ConversationRepository(session)
-            conversation = await conversation_repo.get_by_id(conversation_id)
+            conversation = await conversation_repo.get(conversation_id)
             
-            if not conversation or conversation.user_id != user_id:
+            if not conversation or str(conversation.user_id) != str(user_id):
                 raise ValueError("대화를 찾을 수 없거나 접근 권한이 없습니다.")
             
             # 메시지 생성
@@ -278,9 +293,9 @@ class ConversationHistoryService:
         """대화 정보 수정"""
         try:
             conversation_repo = ConversationRepository(session)
-            conversation = await conversation_repo.get_by_id(conversation_id)
+            conversation = await conversation_repo.get(conversation_id)
             
-            if not conversation or conversation.user_id != user_id:
+            if not conversation or str(conversation.user_id) != str(user_id):
                 return None
             
             # 필드 업데이트
@@ -328,9 +343,9 @@ class ConversationHistoryService:
         """대화 삭제 (기본적으로 소프트 삭제)"""
         try:
             conversation_repo = ConversationRepository(session)
-            conversation = await conversation_repo.get_by_id(conversation_id)
+            conversation = await conversation_repo.get(conversation_id)
             
-            if not conversation or conversation.user_id != user_id:
+            if not conversation or str(conversation.user_id) != str(user_id):
                 return False
             
             if soft_delete:
@@ -357,6 +372,22 @@ class ConversationHistoryService:
             await session.rollback()
             logger.error(f"대화 삭제 실패: {str(e)}")
             raise
+    
+    async def update_conversation_title(
+        self,
+        conversation_id: str,
+        user_id: str,
+        title: str,
+        session: AsyncSession
+    ) -> bool:
+        """대화 제목 수정"""
+        result = await self.update_conversation(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            session=session,
+            title=title
+        )
+        return result is not None
     
     async def get_conversation_statistics(
         self,

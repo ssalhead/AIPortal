@@ -91,9 +91,10 @@ def get_mock_user() -> Dict[str, Any]:
         사용자 정보 딕셔너리
     """
     if settings.MOCK_AUTH_ENABLED:
+        # 기존 데이터베이스의 사용자 ID 사용
         return {
-            "id": settings.MOCK_USER_ID,
-            "email": settings.MOCK_USER_EMAIL,
+            "id": "ff8e410a-53a4-4541-a7d4-ce265678d66a",  # 실제 DB의 사용자 ID
+            "email": "test@aiportal.com",  # 실제 DB의 이메일
             "name": settings.MOCK_USER_NAME,
             "is_active": True,
             "is_superuser": False,

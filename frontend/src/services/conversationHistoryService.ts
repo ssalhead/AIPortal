@@ -9,7 +9,7 @@ export interface ConversationSummary {
   title: string;
   model?: string;
   agent_type?: string;
-  status: 'active' | 'archived' | 'deleted';
+  status: 'ACTIVE' | 'ARCHIVED' | 'DELETED';
   created_at: string;
   updated_at: string;
   message_count: number;
@@ -23,7 +23,7 @@ export interface ConversationDetail {
   description?: string;
   model?: string;
   agent_type?: string;
-  status: 'active' | 'archived' | 'deleted';
+  status: 'ACTIVE' | 'ARCHIVED' | 'DELETED';
   metadata_: Record<string, any>;
   created_at: string;
   updated_at: string;
@@ -38,7 +38,7 @@ export interface ConversationDetail {
 
 export interface ConversationMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: 'USER' | 'ASSISTANT' | 'SYSTEM' | 'TOOL';
   content: string;
   model?: string;
   tokens_input?: number;
@@ -91,7 +91,7 @@ export interface CreateConversationRequest {
 export interface UpdateConversationRequest {
   title?: string;
   description?: string;
-  status?: 'active' | 'archived' | 'deleted';
+  status?: 'ACTIVE' | 'ARCHIVED' | 'DELETED';
   metadata_?: Record<string, any>;
 }
 
@@ -113,9 +113,10 @@ class ConversationHistoryService {
   async getConversations(params: {
     skip?: number;
     limit?: number;
-    status?: 'active' | 'archived' | 'deleted';
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DELETED';
   } = {}): Promise<ConversationListResponse> {
     const response = await apiService.httpClient.get('/history/conversations', { params });
+    // API가 이미 올바른 형태로 반환함
     return response.data;
   }
 
@@ -129,8 +130,35 @@ class ConversationHistoryService {
       message_limit?: number;
     } = {}
   ): Promise<ConversationDetail> {
-    const response = await apiService.httpClient.get(`/history/conversations/${conversationId}`, { params });
-    return response.data;
+    const response = await apiService.httpClient.get(`/chat/history?session_id=${conversationId}`, { params });
+    const messages = response.data;
+    
+    // 기본 대화 정보는 sessions에서 가져와야 함
+    const sessionResponse = await apiService.httpClient.get('/chat/sessions');
+    const conversation = sessionResponse.data.find((conv: any) => conv.id === conversationId);
+    
+    if (!conversation) {
+      throw new Error('대화를 찾을 수 없습니다');
+    }
+    
+    return {
+      id: conversation.id,
+      title: conversation.title,
+      description: conversation.description,
+      model: conversation.model,
+      agent_type: conversation.agent_type,
+      status: conversation.status,
+      metadata_: conversation.metadata_ || {},
+      created_at: conversation.created_at,
+      updated_at: conversation.updated_at,
+      messages: messages,
+      message_pagination: {
+        total: messages.length,
+        skip: params.message_skip || 0,
+        limit: params.message_limit || 50,
+        has_more: false
+      }
+    };
   }
 
   /**
@@ -148,7 +176,7 @@ class ConversationHistoryService {
    * 새 대화 생성
    */
   async createConversation(data: CreateConversationRequest): Promise<ConversationSummary> {
-    const response = await apiService.httpClient.post('/history/conversations', data);
+    const response = await apiService.httpClient.post('/chat/sessions/new');
     return response.data;
   }
 
@@ -159,8 +187,13 @@ class ConversationHistoryService {
     conversationId: string,
     data: UpdateConversationRequest
   ): Promise<ConversationSummary> {
-    const response = await apiService.httpClient.put(`/history/conversations/${conversationId}`, data);
-    return response.data;
+    if (data.title) {
+      const response = await apiService.httpClient.patch(`/chat/sessions/${conversationId}/title`, {
+        title: data.title
+      });
+      return response.data;
+    }
+    throw new Error('현재는 제목 수정만 지원됩니다');
   }
 
   /**
@@ -170,9 +203,7 @@ class ConversationHistoryService {
     conversationId: string,
     hardDelete: boolean = false
   ): Promise<{ message: string; conversation_id: string }> {
-    const response = await apiService.httpClient.delete(`/history/conversations/${conversationId}`, {
-      params: { hard_delete: hardDelete }
-    });
+    const response = await apiService.httpClient.delete(`/chat/sessions/${conversationId}`);
     return response.data;
   }
 

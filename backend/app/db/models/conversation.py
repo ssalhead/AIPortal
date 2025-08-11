@@ -13,9 +13,9 @@ class MessageRole(str, enum.Enum):
     TOOL = "tool"
 
 class ConversationStatus(str, enum.Enum):
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    DELETED = "deleted"
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
 
 class Conversation(Base):
     __tablename__ = "conversations"

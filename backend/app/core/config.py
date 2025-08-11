@@ -75,8 +75,8 @@ class Settings(BaseSettings):
     
     # Mock 인증 설정 (개발용)
     MOCK_AUTH_ENABLED: bool = True
-    MOCK_USER_ID: str = "mock_user_123"
-    MOCK_USER_EMAIL: str = "user@aiportal.com"
+    MOCK_USER_ID: str = "ff8e410a-53a4-4541-a7d4-ce265678d66a"  # 기존 DB의 사용자 ID
+    MOCK_USER_EMAIL: str = "test@aiportal.com"  # 기존 이메일과 맞춤
     MOCK_USER_NAME: str = "테스트 사용자"
     
     # 파일 업로드 설정

@@ -5,6 +5,7 @@ AI 에이전트 서비스
 from typing import Dict, Any, List, AsyncGenerator
 import logging
 import asyncio
+from datetime import datetime
 
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
@@ -51,18 +52,48 @@ class AgentService:
             처리 결과
         """
         try:
-            from app.services.conversation_service import conversation_service
+            from app.services.conversation_history_service import conversation_history_service
+            from app.db.session import AsyncSessionLocal
+            from app.db.models.conversation import MessageRole
             
-            # 대화 세션 관리
-            session = await conversation_service.get_or_create_session(user_id, session_id)
-            
-            # 사용자 메시지를 대화 히스토리에 추가
-            await conversation_service.add_message(
-                session_id=session.session_id,
-                role="user",
-                content=message,
-                user_id=user_id
-            )
+            # 대화 생성 또는 기존 대화 사용
+            async with AsyncSessionLocal() as db:
+                if session_id:
+                    # 기존 대화 확인
+                    conversation_detail = await conversation_history_service.get_conversation_detail(
+                        conversation_id=session_id,
+                        user_id=user_id,
+                        session=db
+                    )
+                    if not conversation_detail:
+                        # 대화가 없으면 새로 생성
+                        conversation = await conversation_history_service.create_conversation(
+                            user_id=user_id,
+                            title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                            session=db,
+                            model=model,
+                            agent_type=agent_type
+                        )
+                        session_id = conversation['id']
+                else:
+                    # 새 대화 생성
+                    conversation = await conversation_history_service.create_conversation(
+                        user_id=user_id,
+                        title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        session=db,
+                        model=model,
+                        agent_type=agent_type
+                    )
+                    session_id = conversation['id']
+                
+                # 사용자 메시지를 대화 히스토리에 추가
+                await conversation_history_service.add_message(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    role=MessageRole.USER,
+                    content=message,
+                    session=db
+                )
             
             # LLM 라우터를 통한 최적 모델 선택
             from app.agents.llm_router import llm_router
@@ -78,24 +109,34 @@ class AgentService:
             else:
                 selected_model = model
             
-            # 대화 컨텍스트 가져오기
-            conversation_context = await conversation_service.get_conversation_context(
-                session_id=session.session_id,
-                user_id=user_id,
-                max_tokens=4000
-            )
+            # 대화 컨텍스트 가져오기 (최근 메시지들)
+            conversation_context = ""
+            async with AsyncSessionLocal() as db:
+                conversation_detail = await conversation_history_service.get_conversation_detail(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    session=db,
+                    message_limit=10  # 최근 10개 메시지만
+                )
+                if conversation_detail and conversation_detail.get('messages'):
+                    context_messages = []
+                    for msg in conversation_detail['messages'][-6:]:  # 최근 6개만 사용
+                        role = "사용자" if msg['role'] == 'USER' else "어시스턴트"
+                        context_messages.append(f"{role}: {msg['content']}")
+                    if context_messages:
+                        conversation_context = "\n".join(context_messages)
             
             # 컨텍스트가 있으면 메시지에 포함
             enhanced_message = message
             if conversation_context:
-                enhanced_message = f"{conversation_context}\n{message}"
+                enhanced_message = f"대화 기록:\n{conversation_context}\n\n현재 질문: {message}"
             
             # 입력 데이터 생성
             agent_input = AgentInput(
                 query=enhanced_message,
                 context=context or {"has_conversation_context": bool(conversation_context)},
                 user_id=user_id,
-                session_id=session.session_id
+                session_id=session_id
             )
             
             # 에이전트 선택 및 실행
@@ -110,7 +151,6 @@ class AgentService:
                 
                 # AgentOutput 형태로 변환
                 from app.agents.base import AgentOutput
-                from datetime import datetime
                 result = AgentOutput(
                     agent_id="direct_llm",
                     result=response_text,
@@ -120,18 +160,6 @@ class AgentService:
                     execution_time_ms=0  # 실제 측정은 추후 구현
                 )
                 
-                # AI 응답을 대화 히스토리에 추가
-                await conversation_service.add_message(
-                    session_id=session.session_id,
-                    role="assistant", 
-                    content=response_text,
-                    user_id=user_id,
-                    metadata={
-                        "agent_used": "direct_llm",
-                        "model_used": actual_model,
-                        "mode": "direct_chat"
-                    }
-                )
             elif agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
                 result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
@@ -143,17 +171,15 @@ class AgentService:
                 result = await agent.execute(agent_input, selected_model, progress_callback)
             
             # AI 응답을 대화 히스토리에 추가
-            await conversation_service.add_message(
-                session_id=session.session_id,
-                role="assistant",
-                content=result.result,
-                user_id=user_id,
-                metadata={
-                    "agent_used": result.agent_id,
-                    "model_used": result.model_used,
-                    "execution_time_ms": result.execution_time_ms
-                }
-            )
+            async with AsyncSessionLocal() as db:
+                await conversation_history_service.add_message(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    role=MessageRole.ASSISTANT,
+                    content=result.result,
+                    session=db,
+                    model=result.model_used
+                )
             
             return {
                 "response": result.result,
@@ -161,7 +187,7 @@ class AgentService:
                 "model_used": result.model_used,
                 "timestamp": result.timestamp,
                 "user_id": user_id,
-                "session_id": session.session_id,  # 세션 ID 반환
+                "session_id": session_id,  # 대화 ID 반환
                 "metadata": result.metadata,
                 "execution_time_ms": result.execution_time_ms,
                 "citations": getattr(result, 'citations', []),  # citations 추가
@@ -169,7 +195,9 @@ class AgentService:
             }
             
         except Exception as e:
+            import traceback
             logger.error(f"채팅 처리 중 오류: {e}")
+            logger.error(f"스택 트레이스: {traceback.format_exc()}")
             return {
                 "response": f"죄송합니다. 메시지 처리 중 오류가 발생했습니다: {str(e)}",
                 "agent_used": "error_handler",

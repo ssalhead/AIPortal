@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react';
-import { ExternalLink, Globe, Search, Clock, Star, TrendingUp, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { ExternalLink, Globe, Search, Clock, Star, TrendingUp, ChevronDown, ChevronUp, Eye, BarChart3, Hash } from 'lucide-react';
 
 export interface SearchResult {
   id: string;
@@ -68,119 +68,195 @@ export const SearchResultsCard: React.FC<SearchResultsCardProps> = ({
     return 'text-gray-600 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400';
   };
 
+  const avgScore = results.length > 0 ? results.reduce((sum, r) => sum + r.score, 0) / results.length : 0;
+  const topSources = [...new Set(results.map(r => r.source))].slice(0, 3);
+
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm">
-      {/* 헤더 */}
+    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm overflow-hidden">
+      {/* 헤더 - 향상된 디자인 */}
       <div 
-        className={`flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700 ${
-          collapsible ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50' : ''
+        className={`flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-slate-200 dark:border-slate-700 ${
+          collapsible ? 'cursor-pointer hover:from-blue-100 hover:to-indigo-100 dark:hover:from-blue-900/30 dark:hover:to-indigo-900/30' : ''
         }`}
         onClick={collapsible ? () => setIsCollapsed(!isCollapsed) : undefined}
       >
         <div className="flex items-center space-x-3">
-          <div className="flex-shrink-0 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-            <Search className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+          <div className="flex-shrink-0 p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-sm">
+            <Search className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h3 className="font-semibold text-slate-900 dark:text-slate-100">
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               웹 검색 결과
+              <div className="flex items-center gap-1">
+                <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                  {Math.round(avgScore * 100)}% 관련도
+                </span>
+              </div>
             </h3>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-              "{query}" 에 대한 {results.length}개 결과
-            </p>
+            <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-400 mt-1">
+              <span>"{query}" 검색</span>
+              <div className="flex items-center gap-1">
+                <Hash className="w-3 h-3" />
+                <span>{results.length}개 결과</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {topSources.map((source, idx) => (
+                  <span key={idx} className="text-xs">
+                    {getSourceIcon(source)}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
         
-        {collapsible && (
-          <button className="p-1 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
-            {isCollapsed ? (
-              <ChevronDown className="w-5 h-5 text-slate-400" />
-            ) : (
-              <ChevronUp className="w-5 h-5 text-slate-400" />
-            )}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* 신뢰도 배지 */}
+          <div className={`px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(avgScore)}`}>
+            {avgScore >= 0.9 ? '🏆 높음' : avgScore >= 0.7 ? '⭐ 보통' : '📊 낮음'}
+          </div>
+          
+          {collapsible && (
+            <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors">
+              {isCollapsed ? (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 검색 결과 목록 */}
       {!isCollapsed && (
         <div className="divide-y divide-slate-200 dark:divide-slate-700">
           {displayResults.map((result, index) => (
-            <div key={result.id || index} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors duration-200">
-              {/* 결과 헤더 */}
-              <div className="flex items-start justify-between gap-3 mb-2">
+            <div key={result.id || index} className="group p-4 hover:bg-gradient-to-r hover:from-slate-50 hover:to-blue-50/30 dark:hover:from-slate-700/50 dark:hover:to-blue-900/10 transition-all duration-200 border-l-4 border-transparent hover:border-blue-400">
+              {/* 결과 헤더 - 향상된 레이아웃 */}
+              <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    {/* 순위 배지 */}
+                    <div className={`
+                      flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold
+                      ${index === 0 ? 'bg-gradient-to-br from-yellow-400 to-orange-500 text-white' :
+                        index === 1 ? 'bg-gradient-to-br from-gray-300 to-gray-500 text-white' :
+                        index === 2 ? 'bg-gradient-to-br from-orange-400 to-red-500 text-white' :
+                        'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'}
+                    `}>
+                      {index + 1}
+                    </div>
+                    
+                    {/* 신뢰도 점수 */}
+                    {showMetadata && (
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(result.score)}`}>
+                        <TrendingUp className="w-3 h-3" />
+                        {Math.round(result.score * 100)}%
+                      </div>
+                    )}
+                  </div>
+                  
                   <a
                     href={result.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group flex items-start gap-2 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
+                    className="group/link block hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
                   >
-                    <h4 className="font-medium text-sm leading-tight overflow-hidden group-hover:underline" 
+                    <h4 className="font-semibold text-slate-900 dark:text-slate-100 leading-tight mb-1 group-hover/link:underline" 
                         style={{
                           display: '-webkit-box',
                           WebkitLineClamp: 2,
                           WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden'
                         }}>
                       {result.title}
                     </h4>
-                    <ExternalLink className="w-4 h-4 flex-shrink-0 opacity-60 group-hover:opacity-100" />
                   </a>
                   
-                  {/* URL 표시 */}
-                  <div className="flex items-center gap-2 mt-1">
-                    <Globe className="w-3 h-3 text-slate-400" />
-                    <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                      {new URL(result.url).hostname}
-                    </span>
+                  {/* URL 및 메타 정보 */}
+                  <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    <div className="flex items-center gap-1">
+                      <Globe className="w-3 h-3" />
+                      <span className="truncate max-w-40">
+                        {new URL(result.url).hostname}
+                      </span>
+                    </div>
+                    
+                    {result.timestamp && (
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        <span>{new Date(result.timestamp).toLocaleDateString('ko-KR')}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* 순위 및 점수 */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs font-medium text-slate-400">#{index + 1}</span>
-                  {showMetadata && (
-                    <div className={`px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(result.score)}`}>
-                      {Math.round(result.score * 100)}%
-                    </div>
-                  )}
-                </div>
+                {/* 외부 링크 아이콘 */}
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0 p-2 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors opacity-60 group-hover:opacity-100"
+                  title="외부 링크로 이동"
+                >
+                  <ExternalLink className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+                </a>
               </div>
 
-              {/* 스니펫 */}
-              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-3 overflow-hidden"
-                 style={{
-                   display: '-webkit-box',
-                   WebkitLineClamp: 3,
-                   WebkitBoxOrient: 'vertical',
-                 }}>
-                {result.snippet}
-              </p>
+              {/* 스니펫 - 향상된 디자인 */}
+              <div className="bg-slate-50 dark:bg-slate-700/30 rounded-lg p-3 mb-3 border-l-4 border-blue-200 dark:border-blue-700">
+                <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed overflow-hidden"
+                   style={{
+                     display: '-webkit-box',
+                     WebkitLineClamp: 3,
+                     WebkitBoxOrient: 'vertical',
+                   }}>
+                  {result.snippet}
+                </p>
+              </div>
 
-              {/* 메타데이터 */}
+              {/* 메타데이터 - 향상된 레이아웃 */}
               {showMetadata && (
-                <div className="flex items-center gap-3 text-xs">
-                  {/* 출처 */}
-                  <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${getSourceColor(result.source)}`}>
-                    <span>{getSourceIcon(result.source)}</span>
-                    <span className="font-medium">
-                      {result.source.split('_')[0]?.charAt(0).toUpperCase() + result.source.split('_')[0]?.slice(1)}
-                    </span>
-                  </div>
-
-                  {/* 신뢰도 */}
-                  <div className="flex items-center gap-1 text-slate-500">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>신뢰도: {Math.round(result.score * 100)}%</span>
-                  </div>
-
-                  {/* 타임스탬프 */}
-                  {result.timestamp && (
-                    <div className="flex items-center gap-1 text-slate-500">
-                      <Clock className="w-3 h-3" />
-                      <span>{new Date(result.timestamp).toLocaleDateString('ko-KR')}</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-xs">
+                    {/* 출처 배지 */}
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${getSourceColor(result.source)}`}>
+                      <span>{getSourceIcon(result.source)}</span>
+                      <span className="font-medium">
+                        {result.source.split('_')[0]?.charAt(0).toUpperCase() + result.source.split('_')[0]?.slice(1)}
+                      </span>
                     </div>
-                  )}
+
+                    {/* 프로바이더 정보 */}
+                    {result.provider && (
+                      <div className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 rounded-full font-medium">
+                        {result.provider}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 우측 메타 정보 */}
+                  <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                    {/* 신뢰도 점수 */}
+                    <div className="flex items-center gap-1">
+                      <div className={`w-2 h-2 rounded-full ${
+                        result.score >= 0.9 ? 'bg-green-500' :
+                        result.score >= 0.8 ? 'bg-blue-500' :
+                        result.score >= 0.7 ? 'bg-yellow-500' : 'bg-gray-400'
+                      }`} />
+                      <span className="font-medium">{Math.round(result.score * 100)}%</span>
+                    </div>
+                    
+                    {/* 타임스탬프 */}
+                    {result.timestamp && (
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        <span>{new Date(result.timestamp).toLocaleDateString('ko-KR')}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

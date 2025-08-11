@@ -16,10 +16,19 @@ import {
 } from 'lucide-react';
 import type { CanvasItem } from '../../types/canvas';
 
-interface ImageGeneratorProps {
+// 기존 Canvas 시스템용 인터페이스
+interface CanvasImageGeneratorProps {
   item: CanvasItem;
   onUpdate: (updates: Partial<CanvasItem>) => void;
 }
+
+// 새로운 Workspace 시스템용 인터페이스  
+interface WorkspaceImageGeneratorProps {
+  onImageGenerated: (imageData: string) => void;
+  readOnly?: boolean;
+}
+
+type ImageGeneratorProps = CanvasImageGeneratorProps | WorkspaceImageGeneratorProps;
 
 const STYLE_PRESETS = [
   { id: 'realistic', name: '사실적', icon: '📷' },
@@ -38,11 +47,19 @@ const SIZE_OPTIONS = [
   { id: '1920x1080', name: '1920×1080', aspect: '16:9' }
 ];
 
-export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ item, onUpdate }) => {
-  const [prompt, setPrompt] = useState(item.content.prompt || '');
-  const [negativePrompt, setNegativePrompt] = useState(item.content.negativePrompt || '');
-  const [selectedStyle, setSelectedStyle] = useState(item.content.style || 'realistic');
-  const [selectedSize, setSelectedSize] = useState(item.content.size || '512x512');
+export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
+  // 타입 가드 함수
+  const isCanvasProps = (props: ImageGeneratorProps): props is CanvasImageGeneratorProps => {
+    return 'item' in props && 'onUpdate' in props;
+  };
+  
+  const isCanvas = isCanvasProps(props);
+  const readOnly = isCanvas ? false : props.readOnly || false;
+  
+  const [prompt, setPrompt] = useState(isCanvas ? props.item.content.prompt || '' : '');
+  const [negativePrompt, setNegativePrompt] = useState(isCanvas ? props.item.content.negativePrompt || '' : '');
+  const [selectedStyle, setSelectedStyle] = useState(isCanvas ? props.item.content.style || 'realistic' : 'realistic');
+  const [selectedSize, setSelectedSize] = useState(isCanvas ? props.item.content.size || '512x512' : '512x512');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationHistory, setGenerationHistory] = useState<string[]>([]);
   
@@ -54,17 +71,19 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ item, onUpdate }
     
     setIsGenerating(true);
     
-    // 상태 업데이트
-    onUpdate({
-      content: {
-        ...item.content,
-        prompt,
-        negativePrompt,
-        style: selectedStyle,
-        size: selectedSize,
-        status: 'generating'
-      }
-    });
+    // 상태 업데이트 (Canvas 전용)
+    if (isCanvas) {
+      props.onUpdate({
+        content: {
+          ...props.item.content,
+          prompt,
+          negativePrompt,
+          style: selectedStyle,
+          size: selectedSize,
+          status: 'generating'
+        }
+      });
+    }
     
     try {
       // TODO: 실제 이미지 생성 API 호출
@@ -80,38 +99,46 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ item, onUpdate }
       
       const mockImageUrl = `https://via.placeholder.com/${selectedSize.replace('x', '/')}/4A90E2/FFFFFF?text=Generated+Image`;
       
-      onUpdate({
-        content: {
-          ...item.content,
-          prompt,
-          negativePrompt,
-          style: selectedStyle,
-          size: selectedSize,
-          imageUrl: mockImageUrl,
-          status: 'completed'
-        }
-      });
+      if (isCanvas) {
+        props.onUpdate({
+          content: {
+            ...props.item.content,
+            prompt,
+            negativePrompt,
+            style: selectedStyle,
+            size: selectedSize,
+            imageUrl: mockImageUrl,
+            status: 'completed'
+          }
+        });
+      } else {
+        props.onImageGenerated(mockImageUrl);
+      }
       
       setGenerationHistory([...generationHistory, mockImageUrl]);
     } catch (error) {
       console.error('Image generation failed:', error);
-      onUpdate({
-        content: {
-          ...item.content,
-          status: 'error',
-          error: '이미지 생성에 실패했습니다. 다시 시도해주세요.'
-        }
-      });
+      
+      if (isCanvas) {
+        props.onUpdate({
+          content: {
+            ...props.item.content,
+            status: 'error',
+            error: '이미지 생성에 실패했습니다. 다시 시도해주세요.'
+          }
+        });
+      }
     } finally {
       setIsGenerating(false);
     }
   };
   
   const handleDownload = () => {
-    if (!item.content.imageUrl) return;
+    const imageUrl = isCanvas ? props.item.content.imageUrl : generationHistory[generationHistory.length - 1];
+    if (!imageUrl) return;
     
     const a = document.createElement('a');
-    a.href = item.content.imageUrl;
+    a.href = imageUrl;
     a.download = `generated-image-${Date.now()}.png`;
     a.click();
   };
@@ -282,12 +309,12 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ item, onUpdate }
                   </p>
                 </div>
               </div>
-            ) : item.content.status === 'error' ? (
+            ) : (isCanvas && props.item.content.status === 'error') ? (
               <div className="aspect-square flex items-center justify-center">
                 <div className="text-center">
                   <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
                   <p className="text-sm text-red-600 dark:text-red-400">
-                    {item.content.error}
+                    {isCanvas ? props.item.content.error : '이미지 생성에 실패했습니다'}
                   </p>
                   <button
                     onClick={handleGenerate}

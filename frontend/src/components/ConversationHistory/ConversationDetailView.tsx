@@ -19,11 +19,11 @@ import {
   Loader2,
   RotateCcw
 } from 'lucide-react';
-import { 
+import type { 
   ConversationDetail, 
-  ConversationMessage,
-  conversationHistoryService 
+  ConversationMessage
 } from '../../services/conversationHistoryService';
+import { conversationHistoryService } from '../../services/conversationHistoryService';
 import { useToast } from '../ui/Toast';
 
 interface ConversationDetailViewProps {
@@ -137,13 +137,13 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
 
   const getMessageIcon = (role: string) => {
     switch (role) {
-      case 'user':
+      case 'USER':
         return '👤';
-      case 'assistant':
+      case 'ASSISTANT':
         return '🤖';
-      case 'system':
+      case 'SYSTEM':
         return '⚙️';
-      case 'tool':
+      case 'TOOL':
         return '🔧';
       default:
         return '❓';
@@ -353,13 +353,13 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
           <div
             key={message.id}
             className={`
-              flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}
+              flex ${message.role === 'USER' ? 'justify-end' : 'justify-start'}
             `}
           >
             <div
               className={`
                 max-w-[80%] rounded-lg p-4 shadow-sm
-                ${message.role === 'user' 
+                ${message.role === 'USER' 
                   ? 'bg-blue-600 text-white' 
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
                 }
@@ -373,17 +373,17 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
                   </span>
                   <span className={`
                     text-xs font-medium
-                    ${message.role === 'user' ? 'text-blue-100' : 'text-gray-600 dark:text-gray-400'}
+                    ${message.role === 'USER' ? 'text-blue-100' : 'text-gray-600 dark:text-gray-400'}
                   `}>
-                    {message.role === 'user' ? '사용자' : 
-                     message.role === 'assistant' ? '어시스턴트' :
-                     message.role === 'system' ? '시스템' : '도구'}
+                    {message.role === 'USER' ? '사용자' : 
+                     message.role === 'ASSISTANT' ? '어시스턴트' :
+                     message.role === 'SYSTEM' ? '시스템' : '도구'}
                   </span>
                   
                   {message.model && (
                     <span className={`
                       text-xs px-2 py-0.5 rounded
-                      ${message.role === 'user' 
+                      ${message.role === 'USER' 
                         ? 'bg-blue-500 text-blue-100' 
                         : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
                       }
@@ -397,7 +397,7 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
                   onClick={() => copyToClipboard(message.content)}
                   className={`
                     p-1 rounded hover:bg-opacity-20 hover:bg-black transition-colors
-                    ${message.role === 'user' ? 'text-blue-100' : 'text-gray-500 dark:text-gray-400'}
+                    ${message.role === 'USER' ? 'text-blue-100' : 'text-gray-500 dark:text-gray-400'}
                   `}
                   title="복사"
                 >
@@ -420,7 +420,7 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
               {/* 메시지 메타데이터 */}
               <div className={`
                 mt-3 pt-2 border-t flex items-center justify-between text-xs
-                ${message.role === 'user' 
+                ${message.role === 'USER' 
                   ? 'border-blue-500 text-blue-100' 
                   : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'
                 }

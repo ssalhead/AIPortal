@@ -8,7 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
 from app.core.security import verify_token, get_mock_user
-from app.db.session import SessionLocal
+from app.db.session import get_db as get_async_db
 
 # HTTP Bearer 토큰 스키마
 security = HTTPBearer(auto_error=False)
@@ -34,6 +34,15 @@ async def get_current_user(
         mock_user = get_mock_user()
         if mock_user:
             return mock_user
+        else:
+            # Mock 사용자 생성 실패 시 기본 사용자 반환
+            return {
+                "id": "default_user",
+                "email": "default@aiportal.com", 
+                "name": "기본 사용자",
+                "is_active": True,
+                "is_superuser": False
+            }
     
     # 실제 토큰 검증 (Mock 인증이 비활성화된 경우)
     if credentials is None:
@@ -84,15 +93,12 @@ async def get_current_active_user(
     return current_user
 
 
-def get_db():
+async def get_db():
     """
-    데이터베이스 세션 의존성
+    비동기 데이터베이스 세션 의존성
     
     Yields:
-        데이터베이스 세션
+        비동기 데이터베이스 세션
     """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    async for session in get_async_db():
+        yield session

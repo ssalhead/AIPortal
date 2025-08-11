@@ -113,7 +113,7 @@ class ConversationCacheManager:
                 'title': row.title,
                 'model': row.model,
                 'agent_type': row.agent_type,
-                'status': row.status,
+                'status': str(row.status),
                 'created_at': row.created_at.isoformat() if row.created_at else None,
                 'updated_at': row.updated_at.isoformat() if row.updated_at else None,
                 'message_count': row.message_count,
@@ -190,7 +190,7 @@ class ConversationCacheManager:
         for row in result:
             message_data = {
                 'id': str(row.id),
-                'role': row.role,
+                'role': (row.role.value if hasattr(row.role, 'value') else str(row.role)).upper(),
                 'content': row.content,
                 'model': row.model,
                 'tokens_input': row.tokens_input,

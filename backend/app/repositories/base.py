@@ -15,6 +15,14 @@ class BaseRepository(Generic[ModelType]):
     
     async def create(self, **kwargs) -> ModelType:
         """새 레코드 생성"""
+        from datetime import datetime
+        
+        # datetime 필드가 있으면 현재 시간으로 설정
+        if hasattr(self.model, 'created_at') and 'created_at' not in kwargs:
+            kwargs['created_at'] = datetime.utcnow()
+        if hasattr(self.model, 'updated_at') and 'updated_at' not in kwargs:
+            kwargs['updated_at'] = datetime.utcnow()
+            
         instance = self.model(**kwargs)
         self.session.add(instance)
         await self.session.commit()

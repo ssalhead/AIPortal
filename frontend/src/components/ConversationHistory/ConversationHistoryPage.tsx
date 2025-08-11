@@ -4,10 +4,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { History, TrendingUp, Settings } from 'lucide-react';
+import { History, TrendingUp } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { ConversationDetailView } from './ConversationDetailView';
-import { ConversationSummary, conversationHistoryService } from '../../services/conversationHistoryService';
+import type { ConversationSummary } from '../../services/conversationHistoryService';
+import { conversationHistoryService } from '../../services/conversationHistoryService';
 import { useToast } from '../ui/Toast';
 
 interface ConversationHistoryPageProps {

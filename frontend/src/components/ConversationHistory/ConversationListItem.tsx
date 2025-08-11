@@ -15,7 +15,7 @@ import {
   Trash2,
   Edit3
 } from 'lucide-react';
-import { ConversationSummary } from '../../services/conversationHistoryService';
+import type { ConversationSummary } from '../../services/conversationHistoryService';
 
 interface ConversationListItemProps {
   conversation: ConversationSummary;
@@ -166,7 +166,7 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({
                   </button>
                 )}
                 
-                {onArchive && conversation.status === 'active' && (
+                {onArchive && conversation.status === 'ACTIVE' && (
                   <button
                     onClick={(e) => handleMenuAction('archive', e)}
                     className="
@@ -223,7 +223,7 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({
         </div>
 
         {/* 상태 표시 */}
-        {conversation.status === 'archived' && (
+        {conversation.status === 'ARCHIVED' && (
           <span className="text-yellow-600 dark:text-yellow-400 font-medium">
             보관됨
           </span>

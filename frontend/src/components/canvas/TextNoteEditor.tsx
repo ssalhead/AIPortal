@@ -21,17 +21,38 @@ import {
 } from 'lucide-react';
 import type { CanvasItem } from '../../types/canvas';
 
-interface TextNoteEditorProps {
+// 기존 Canvas 시스템용 인터페이스
+interface CanvasTextNoteEditorProps {
   item: CanvasItem;
   onUpdate: (updates: Partial<CanvasItem>) => void;
 }
 
-export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }) => {
-  const [title, setTitle] = useState(item.content.title || '');
-  const [content, setContent] = useState(item.content.content || '');
-  const [isBold, setIsBold] = useState(item.content.formatting?.bold || false);
-  const [isItalic, setIsItalic] = useState(item.content.formatting?.italic || false);
-  const [textColor, setTextColor] = useState(item.content.formatting?.color || '#000000');
+// 새로운 Workspace 시스템용 인터페이스
+interface WorkspaceTextNoteEditorProps {
+  content: string;
+  onChange: (content: string) => void;
+  readOnly?: boolean;
+}
+
+type TextNoteEditorProps = CanvasTextNoteEditorProps | WorkspaceTextNoteEditorProps;
+
+export const TextNoteEditor: React.FC<TextNoteEditorProps> = (props) => {
+  // 타입 가드 함수
+  const isCanvasProps = (props: TextNoteEditorProps): props is CanvasTextNoteEditorProps => {
+    return 'item' in props && 'onUpdate' in props;
+  };
+  
+  // 프롭스에 따른 초기 값 설정
+  const isCanvas = isCanvasProps(props);
+  const initialContent = isCanvas ? props.item.content.content || '' : props.content || '';
+  const initialTitle = isCanvas ? props.item.content.title || '' : '';
+  const readOnly = isCanvas ? false : props.readOnly || false;
+  
+  const [title, setTitle] = useState(initialTitle);
+  const [content, setContent] = useState(initialContent);
+  const [isBold, setIsBold] = useState(isCanvas ? props.item.content.formatting?.bold || false : false);
+  const [isItalic, setIsItalic] = useState(isCanvas ? props.item.content.formatting?.italic || false : false);
+  const [textColor, setTextColor] = useState(isCanvas ? props.item.content.formatting?.color || '#000000' : '#000000');
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -53,17 +74,23 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
   
   const handleSave = () => {
     setIsSaving(true);
-    onUpdate({
-      content: {
-        title,
-        content,
-        formatting: {
-          bold: isBold,
-          italic: isItalic,
-          color: textColor
+    
+    if (isCanvas) {
+      props.onUpdate({
+        content: {
+          title,
+          content,
+          formatting: {
+            bold: isBold,
+            italic: isItalic,
+            color: textColor
+          }
         }
-      }
-    });
+      });
+    } else {
+      props.onChange(content);
+    }
+    
     setTimeout(() => setIsSaving(false), 500);
   };
   
@@ -112,14 +139,21 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
       {/* 툴바 */}
       <div className="border-b border-slate-200 dark:border-slate-700 p-4">
         <div className="flex items-center justify-between mb-3">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={handleSave}
-            placeholder="노트 제목"
-            className="text-xl font-bold bg-transparent border-none outline-none text-slate-900 dark:text-slate-100 placeholder-slate-400"
-          />
+          {isCanvas ? (
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={handleSave}
+              placeholder="노트 제목"
+              disabled={readOnly}
+              className="text-xl font-bold bg-transparent border-none outline-none text-slate-900 dark:text-slate-100 placeholder-slate-400 disabled:opacity-50"
+            />
+          ) : (
+            <div className="text-xl font-bold text-slate-900 dark:text-slate-100">
+              텍스트 노트
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopy}
@@ -160,8 +194,9 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
               setIsBold(!isBold);
               insertText('**', '**');
             }}
+            disabled={readOnly}
             className={`
-              p-2 rounded transition-colors
+              p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed
               ${isBold 
                 ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100' 
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -176,8 +211,9 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
               setIsItalic(!isItalic);
               insertText('*', '*');
             }}
+            disabled={readOnly}
             className={`
-              p-2 rounded transition-colors
+              p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed
               ${isItalic 
                 ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100' 
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -189,7 +225,8 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
           </button>
           <button
             onClick={() => insertText('~~', '~~')}
-            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
+            disabled={readOnly}
+            className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="취소선"
           >
             <Underline className="w-4 h-4" />
@@ -272,10 +309,16 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => {
+            setContent(e.target.value);
+            if (!isCanvas) {
+              props.onChange(e.target.value);
+            }
+          }}
           onBlur={handleSave}
+          readOnly={readOnly}
           placeholder="여기에 내용을 입력하세요... (Markdown 문법을 지원합니다)"
-          className="w-full min-h-[400px] bg-transparent border-none outline-none resize-none text-slate-800 dark:text-slate-200 placeholder-slate-400"
+          className="w-full min-h-[400px] bg-transparent border-none outline-none resize-none text-slate-800 dark:text-slate-200 placeholder-slate-400 disabled:opacity-50"
           style={{
             fontWeight: isBold ? 'bold' : 'normal',
             fontStyle: isItalic ? 'italic' : 'normal',
@@ -292,7 +335,12 @@ export const TextNoteEditor: React.FC<TextNoteEditorProps> = ({ item, onUpdate }
             <span>{charCount} 글자</span>
           </div>
           <div className="flex items-center gap-2">
-            <span>마지막 저장: {new Date(item.updatedAt).toLocaleTimeString()}</span>
+            {isCanvas && (
+              <span>마지막 저장: {new Date(props.item.updatedAt).toLocaleTimeString()}</span>
+            )}
+            {readOnly && (
+              <span className="text-yellow-600">읽기 전용</span>
+            )}
           </div>
         </div>
       </div>

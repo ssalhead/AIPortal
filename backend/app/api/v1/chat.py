@@ -63,14 +63,39 @@ async def send_message(
     from app.services.citation_service import CitationService
     from app.services.logging_service import logging_service
     
+    # current_user 안전성 검증
+    if not current_user or not isinstance(current_user, dict):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="사용자 인증 정보가 올바르지 않습니다"
+        )
+    
+    user_id = current_user.get("id", "default_user")
+    
     # 에이전트 서비스를 통해 메시지 처리 (대화 컨텍스트 지원)
     result = await agent_service.execute_chat(
         message=chat_message.message,
         model=chat_message.model,
         agent_type=chat_message.agent_type,
-        user_id=current_user["id"],
+        user_id=user_id,
         session_id=chat_message.session_id
     )
+    
+    # AgentOutput 객체인 경우 딕셔너리로 변환
+    if hasattr(result, 'model_dump'):
+        result = result.model_dump()
+    elif not isinstance(result, dict):
+        # AgentOutput 타입인 경우 수동 변환
+        result = {
+            "response": getattr(result, 'result', '응답을 생성할 수 없습니다'),
+            "agent_used": getattr(result, 'agent_id', 'unknown'),
+            "model_used": getattr(result, 'model_used', chat_message.model),
+            "timestamp": getattr(result, 'timestamp', ''),
+            "user_id": user_id,
+            "session_id": chat_message.session_id,
+            "citations": [],
+            "sources": []
+        }
     
     # 인용 정보 처리 - 에이전트에서 직접 제공된 citations와 sources 사용
     citations = result.get("citations", [])
@@ -113,8 +138,8 @@ async def send_message(
         timestamp=result["timestamp"],
         user_id=result["user_id"],
         session_id=result.get("session_id"),  # 세션 ID 포함
-        citations=citations,
-        sources=sources[:chat_message.max_sources],  # 최대 출처 개수 제한
+        citations=citations or [],
+        sources=(sources or [])[:chat_message.max_sources],  # 최대 출처 개수 제한
         citation_stats=citation_stats
     )
 
@@ -255,18 +280,34 @@ async def get_chat_history(
     Returns:
         채팅 히스토리 목록
     """
-    from app.services.conversation_service import conversation_service
+    from app.services.conversation_history_service import conversation_history_service
+    from app.db.session import AsyncSessionLocal
     
-    if session_id:
-        # 특정 세션의 히스토리
-        return await conversation_service.get_session_history(
-            session_id=session_id,
-            user_id=current_user["id"],
-            limit=limit
-        )
-    else:
-        # 사용자의 모든 세션 조회 (기본 동작을 위한 빈 리스트 반환)
-        return []
+    async with AsyncSessionLocal() as db:
+        if session_id:
+            # 특정 세션의 히스토리
+            conversation_detail = await conversation_history_service.get_conversation_detail(
+                conversation_id=session_id,
+                user_id=current_user["id"],
+                session=db,
+                message_limit=limit
+            )
+            if conversation_detail and conversation_detail.get('messages'):
+                # 디버깅: API 응답 데이터 확인
+                messages = conversation_detail['messages']
+                logger.info(f"API 응답 메시지 샘플 (총 {len(messages)}개):")
+                for i, msg in enumerate(messages[:2]):  # 처음 2개만 로깅
+                    logger.info(f"  메시지 {i+1}: role='{msg.get('role')}' (타입: {type(msg.get('role'))}) content='{msg.get('content', '')[:30]}...'")
+                return messages
+            return []
+        else:
+            # 사용자의 모든 대화 조회
+            conversations = await conversation_history_service.get_user_conversations(
+                user_id=current_user["id"],
+                session=db,
+                limit=limit
+            )
+            return conversations
 
 
 @router.get("/sessions")
@@ -284,12 +325,19 @@ async def get_user_sessions(
     Returns:
         대화 세션 목록
     """
-    from app.services.conversation_service import conversation_service
+    from app.services.conversation_history_service import conversation_history_service
+    from app.db.session import AsyncSessionLocal
     
-    return await conversation_service.get_user_sessions(
-        user_id=current_user["id"],
-        limit=limit
-    )
+    async with AsyncSessionLocal() as db:
+        result = await conversation_history_service.get_user_conversations(
+            user_id=current_user["id"],
+            session=db,
+            limit=limit
+        )
+        # 딕셔너리에서 conversations 리스트만 반환
+        if isinstance(result, dict) and 'conversations' in result:
+            return result['conversations']
+        return result
 
 
 @router.post("/sessions/new")
@@ -305,16 +353,21 @@ async def create_new_session(
     Returns:
         새 세션 정보
     """
-    from app.services.conversation_service import conversation_service
+    from app.services.conversation_history_service import conversation_history_service
+    from app.db.session import AsyncSessionLocal
+    from datetime import datetime
     
-    session = await conversation_service.create_new_session(
-        user_id=current_user["id"]
-    )
+    async with AsyncSessionLocal() as db:
+        conversation = await conversation_history_service.create_conversation(
+            user_id=current_user["id"],
+            title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            session=db
+        )
     
     return {
-        "session_id": session.session_id,
-        "created_at": session.created_at.isoformat(),
-        "title": session.title
+        "session_id": conversation["id"],
+        "created_at": conversation["created_at"],
+        "title": conversation["title"]
     }
 
 
@@ -333,12 +386,15 @@ async def end_session(
     Returns:
         결과 메시지
     """
-    from app.services.conversation_service import conversation_service
+    from app.services.conversation_history_service import conversation_history_service
+    from app.db.session import AsyncSessionLocal
     
-    success = await conversation_service.end_session(
-        session_id=session_id,
-        user_id=current_user["id"]
-    )
+    async with AsyncSessionLocal() as db:
+        success = await conversation_history_service.delete_conversation(
+            conversation_id=session_id,
+            user_id=current_user["id"],
+            session=db
+        )
     
     if success:
         return {"message": "세션이 성공적으로 종료되었습니다."}
@@ -349,10 +405,13 @@ async def end_session(
         )
 
 
+class TitleUpdateRequest(BaseModel):
+    title: str
+
 @router.patch("/sessions/{session_id}/title")
 async def update_session_title(
     session_id: str,
-    title: str,
+    request: TitleUpdateRequest,
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ) -> Dict[str, str]:
     """
@@ -366,13 +425,16 @@ async def update_session_title(
     Returns:
         결과 메시지
     """
-    from app.services.conversation_service import conversation_service
+    from app.services.conversation_history_service import conversation_history_service
+    from app.db.session import AsyncSessionLocal
     
-    success = await conversation_service.update_session_title(
-        session_id=session_id,
-        user_id=current_user["id"],
-        title=title
-    )
+    async with AsyncSessionLocal() as db:
+        success = await conversation_history_service.update_conversation_title(
+            conversation_id=session_id,
+            user_id=current_user["id"],
+            title=request.title,
+            session=db
+        )
     
     if success:
         return {"message": "세션 제목이 성공적으로 수정되었습니다."}

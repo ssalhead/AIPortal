@@ -11,10 +11,12 @@ import { WelcomeScreen } from '../components/ui/WelcomeScreen';
 import { ToastContainer, useToast } from '../components/ui/Toast';
 import { TypingIndicator } from '../components/ui/TypingIndicator';
 import { Resizer } from '../components/ui/Resizer';
+import { SearchProgressIndicator } from '../components/SearchProcess/SearchProgressIndicator';
 import { useLoading } from '../contexts/LoadingContext';
 import { useResponsive, useTouchDevice } from '../hooks/useResponsive';
 import { useSidebarWidth } from '../hooks/useSidebarWidth';
 import { apiService } from '../services/api';
+import { conversationHistoryService } from '../services/conversationHistoryService';
 import { Star, Zap, Menu, X } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
@@ -68,6 +70,25 @@ export const ChatPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
+
+  // 대화 기록 로딩
+  const { data: chatHistoryData, refetch: refetchHistory } = useQuery({
+    queryKey: ['conversations'],
+    queryFn: async () => {
+      try {
+        const response = await conversationHistoryService.getConversations({ limit: 50 });
+        return response.conversations;
+      } catch (error) {
+        console.error('대화 기록 로딩 실패:', error);
+        return [];
+      }
+    },
+    staleTime: 5 * 60 * 1000, // 5분
+  });
+
+  // 안전하게 chatHistory 처리
+  const chatHistory = Array.isArray(chatHistoryData) ? chatHistoryData : [];
+
   const { 
     toasts, 
     removeToast, 
@@ -77,12 +98,6 @@ export const ChatPage: React.FC = () => {
     showInfo 
   } = useToast();
 
-  // 채팅 히스토리 조회
-  const { data: chatHistory } = useQuery({
-    queryKey: ['chatHistory'],
-    queryFn: () => apiService.getChatHistory(50),
-    staleTime: 0, // 항상 최신 데이터 요청
-  });
 
   // 메시지 전송 뮤테이션 (기본 버전 - 백업용)
   const sendMessageMutation = useMutation({
@@ -220,7 +235,7 @@ export const ChatPage: React.FC = () => {
     else if (chatHistory && chatHistory.length === 0) {
       setMessages([]);
     }
-  }, [chatHistory]); // showInfo 의존성 제거
+  }, [chatHistory?.length]); // 길이만 감지하여 무한 루프 방지
 
   // 새 메시지가 추가되면 스크롤을 맨 아래로
   useEffect(() => {
@@ -438,6 +453,9 @@ export const ChatPage: React.FC = () => {
           setCurrentSessionId(response.session_id);
         }
         
+        // 새 메시지가 추가된 경우 대화 기록 새로고침
+        await refetchHistory();
+        
         // 웹 검색 결과를 SearchResult 형식으로 변환
         let searchResults: SearchResult[] = [];
         let searchQuery = '';
@@ -522,14 +540,38 @@ export const ChatPage: React.FC = () => {
     }
   };
 
-  const handleNewChat = () => {
-    setMessages([]);
-    setCurrentSessionId(null); // 새 세션 시작
-    showInfo('새 대화를 시작합니다.');
-    
-    // 모바일에서는 새 대화 시작 시 사이드바 자동 닫기
-    if (isMobile) {
-      setIsSidebarOpen(false);
+  const handleNewChat = async () => {
+    try {
+      // 새 세션 생성
+      const newSession = await apiService.httpClient.post('/v1/chat/sessions/new');
+      const sessionData = newSession.data;
+      
+      setMessages([]);
+      setCurrentSessionId(sessionData.session_id);
+      
+      // Canvas 상태 초기화
+      if (selectedAgent === 'canvas') {
+        clearCanvas();
+      }
+      
+      // 대화 기록 새로고침
+      await refetchHistory();
+      
+      showSuccess('새 대화를 시작했습니다.');
+      
+      // 모바일에서는 새 대화 시작 시 사이드바 자동 닫기
+      if (isMobile) {
+        setIsSidebarOpen(false);
+      }
+    } catch (error) {
+      console.error('새 채팅 생성 실패:', error);
+      setMessages([]);
+      setCurrentSessionId(null); // 실패 시 세션 없이 시작
+      showInfo('새 대화를 시작합니다.');
+      
+      if (isMobile) {
+        setIsSidebarOpen(false);
+      }
     }
   };
 
@@ -612,15 +654,69 @@ export const ChatPage: React.FC = () => {
             isOpen={isSidebarOpen}
             onToggle={handleSidebarToggle}
             onNewChat={handleNewChat}
-            chatHistory={[]} // TODO: 실제 채팅 히스토리 연결
-            onSelectChat={(chatId) => {
-              console.log('Select chat:', chatId);
-              // 모바일에서 채팅 선택 시 사이드바 닫기
-              if (isMobile) {
-                setIsSidebarOpen(false);
+            chatHistory={chatHistory}
+            onSelectChat={async (conversationId) => {
+              try {
+                // 선택된 대화의 메시지 로드
+                const conversation = await conversationHistoryService.getConversationDetail(conversationId);
+                
+                // 메시지를 UI 형식으로 변환
+                const formattedMessages: Message[] = conversation.messages.map(msg => ({
+                  id: msg.id,
+                  content: msg.content,
+                  isUser: msg.role === 'USER',
+                  timestamp: msg.created_at,
+                  model: msg.model,
+                  agentType: conversation.agent_type,
+                  citations: [],
+                  sources: []
+                }));
+                
+                setMessages(formattedMessages);
+                setCurrentSessionId(conversationId);
+                
+                // 모델과 에이전트 타입도 동기화
+                if (conversation.model) {
+                  // 모델 문자열에서 provider와 model 파싱
+                  const modelKey = conversation.model as LLMModel;
+                  if (MODEL_MAP[modelKey]) {
+                    const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+                    setSelectedProvider(provider as LLMProvider);
+                    setSelectedModel(modelKey);
+                  }
+                }
+                
+                if (conversation.agent_type) {
+                  setSelectedAgent(conversation.agent_type as AgentType);
+                }
+                
+                // 모바일에서 채팅 선택 시 사이드바 닫기
+                if (isMobile) {
+                  setIsSidebarOpen(false);
+                }
+                
+                showSuccess('대화를 불러왔습니다.');
+              } catch (error) {
+                console.error('대화 로딩 실패:', error);
+                showError('대화를 불러올 수 없습니다.');
               }
             }}
-            onDeleteChat={(chatId) => console.log('Delete chat:', chatId)}
+            onDeleteChat={async (conversationId) => {
+              try {
+                await conversationHistoryService.deleteConversation(conversationId);
+                await refetchHistory();
+                showSuccess('대화가 삭제되었습니다.');
+                
+                // 현재 대화가 삭제된 경우 새 대화 시작
+                if (currentSessionId === conversationId) {
+                  setMessages([]);
+                  setCurrentSessionId(null);
+                }
+              } catch (error) {
+                console.error('대화 삭제 실패:', error);
+                showError('대화를 삭제할 수 없습니다.');
+              }
+            }}
             isMobile={isMobile}
           />
         </div>
@@ -681,6 +777,17 @@ export const ChatPage: React.FC = () => {
                       {messages.length}개 메시지
                     </div>
                   </div>
+                </div>
+              )}
+              
+              {/* 검색 진행 상태 표시 (상단) */}
+              {(searchProgress?.isSearching || searchSteps.length > 0) && (
+                <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+                  <SearchProgressIndicator 
+                    steps={searchSteps}
+                    isVisible={true}
+                    compact={true}
+                  />
                 </div>
               )}
               

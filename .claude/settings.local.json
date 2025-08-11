@@ -44,7 +44,10 @@
       "Bash(ss:*)",
       "Bash(kill:*)",
       "Bash(fuser:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(docker-compose:*)",
+      "Bash(npm run:*)",
+      "Bash(journalctl:*)"
     ],
     "deny": [],
     "additionalDirectories": [

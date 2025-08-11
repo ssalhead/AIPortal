@@ -21,10 +21,20 @@ import {
 } from 'lucide-react';
 import type { CanvasItem, MindMapNode } from '../../types/canvas';
 
-interface MindMapEditorProps {
+// 기존 Canvas 시스템용 인터페이스
+interface CanvasMindMapEditorProps {
   item: CanvasItem;
   onUpdate: (updates: Partial<CanvasItem>) => void;
 }
+
+// 새로운 Workspace 시스템용 인터페이스
+interface WorkspaceMindMapEditorProps {
+  data: string;
+  onChange: (content: string) => void;
+  readOnly?: boolean;
+}
+
+type MindMapEditorProps = CanvasMindMapEditorProps | WorkspaceMindMapEditorProps;
 
 const NODE_COLORS = [
   '#3B82F6', // blue
@@ -39,12 +49,21 @@ const NODE_COLORS = [
 
 const NODE_SHAPES = ['circle', 'square', 'hexagon'];
 
-export const MindMapEditor: React.FC<MindMapEditorProps> = ({ item, onUpdate }) => {
-  const [rootNode, setRootNode] = useState<MindMapNode>(item.content || {
-    id: 'root',
-    label: '중심 주제',
-    children: []
-  });
+export const MindMapEditor: React.FC<MindMapEditorProps> = (props) => {
+  // 타입 가드 함수
+  const isCanvasProps = (props: MindMapEditorProps): props is CanvasMindMapEditorProps => {
+    return 'item' in props && 'onUpdate' in props;
+  };
+  
+  const isCanvas = isCanvasProps(props);
+  const readOnly = isCanvas ? false : props.readOnly || false;
+  
+  // 초기 데이터 설정
+  const initialData = isCanvas 
+    ? props.item.content 
+    : props.data ? JSON.parse(props.data) : { id: 'root', label: '중심 주제', children: [] };
+    
+  const [rootNode, setRootNode] = useState<MindMapNode>(initialData);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
@@ -74,7 +93,13 @@ export const MindMapEditor: React.FC<MindMapEditorProps> = ({ item, onUpdate }) 
     
     const updatedRoot = addToParent(rootNode);
     setRootNode(updatedRoot);
-    onUpdate({ content: updatedRoot });
+    
+    if (isCanvas) {
+      props.onUpdate({ content: updatedRoot });
+    } else {
+      props.onChange(JSON.stringify(updatedRoot));
+    }
+    
     setEditingNodeId(newNode.id);
     setEditingLabel('새 노드');
   };
@@ -98,7 +123,11 @@ export const MindMapEditor: React.FC<MindMapEditorProps> = ({ item, onUpdate }) 
     const updatedRoot = deleteFromTree(rootNode);
     if (updatedRoot) {
       setRootNode(updatedRoot);
-      onUpdate({ content: updatedRoot });
+      if (isCanvas) {
+        props.onUpdate({ content: updatedRoot });
+      } else {
+        props.onChange(JSON.stringify(updatedRoot));
+      }
     }
     setSelectedNodeId(null);
   };
