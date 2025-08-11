@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChatMessage } from '../components/chat/ChatMessage';
 import { ChatInput } from '../components/chat/ChatInput';
 import { Sidebar } from '../components/layout/Sidebar';
@@ -70,6 +70,7 @@ export const ChatPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
+  const queryClient = useQueryClient();
 
   // 대화 기록 로딩
   const { data: chatHistoryData, refetch: refetchHistory } = useQuery({
@@ -83,11 +84,18 @@ export const ChatPage: React.FC = () => {
         return [];
       }
     },
-    staleTime: 5 * 60 * 1000, // 5분
+    staleTime: 0, // 항상 최신 데이터 가져오기
+    cacheTime: 1000 * 60, // 1분간 캐시 유지
   });
 
-  // 안전하게 chatHistory 처리
-  const chatHistory = Array.isArray(chatHistoryData) ? chatHistoryData : [];
+  // 안전하게 chatHistory 처리 및 형식 변환
+  const chatHistory = Array.isArray(chatHistoryData) 
+    ? chatHistoryData.map(item => ({
+        id: item.id,
+        title: item.title,
+        timestamp: item.updated_at || item.created_at // updated_at을 timestamp로 사용
+      }))
+    : [];
 
   const { 
     toasts, 
@@ -98,6 +106,114 @@ export const ChatPage: React.FC = () => {
     showInfo 
   } = useToast();
 
+  // 대화 삭제 뮤테이션 (Optimistic Updates 포함)
+  const deleteConversationMutation = useMutation({
+    mutationFn: async (conversationId: string) => {
+      await conversationHistoryService.deleteConversation(conversationId);
+      return conversationId;
+    },
+    onMutate: async (deletedConversationId) => {
+      // Optimistic Update: 낙관적 업데이트로 즉시 UI 반영
+      await queryClient.cancelQueries({ queryKey: ['conversations'] });
+      
+      // 이전 데이터 스냅샷 저장 (롤백용)
+      const previousConversations = queryClient.getQueryData(['conversations']);
+      
+      // 낙관적 업데이트: 삭제된 대화를 즉시 목록에서 제거
+      queryClient.setQueryData(['conversations'], (old: any[]) => 
+        old ? old.filter(conv => conv.id !== deletedConversationId) : []
+      );
+      
+      return { previousConversations };
+    },
+    onSuccess: async (deletedConversationId) => {
+      // 서버에서 최신 데이터 다시 가져오기
+      await refetchHistory();
+      
+      // 최신 대화 목록 가져오기
+      const updatedHistoryData = queryClient.getQueryData<any[]>(['conversations']) || [];
+      const updatedHistory = updatedHistoryData.map(item => ({
+        id: item.id,
+        title: item.title,
+        timestamp: item.updated_at || item.created_at
+      }));
+      
+      showSuccess('대화가 삭제되었습니다.');
+      
+      // 현재 선택된 대화가 삭제된 경우
+      if (currentSessionId === deletedConversationId) {
+        setMessages([]);
+        
+        if (updatedHistory.length > 0) {
+          // 가장 최근 대화로 자동 전환
+          const latestChat = updatedHistory[0];
+          await loadConversation(latestChat.id);
+          showInfo(`"${latestChat.title}" 대화로 이동했습니다.`);
+        } else {
+          // 모든 대화가 삭제된 경우 새 대화 준비
+          setCurrentSessionId(null);
+          showInfo('새로운 대화를 시작해보세요.');
+        }
+      } 
+      // 선택되지 않은 대화가 삭제되었지만, 현재 화면이 빈 상태인 경우
+      else if (!currentSessionId && updatedHistory.length > 0) {
+        // 가장 최근 대화로 자동 이동
+        const latestChat = updatedHistory[0];
+        await loadConversation(latestChat.id);
+        showInfo(`"${latestChat.title}" 대화를 불러왔습니다.`);
+      }
+    },
+    onError: (error, deletedConversationId, context) => {
+      // 에러 발생 시 이전 상태로 롤백
+      if (context?.previousConversations) {
+        queryClient.setQueryData(['conversations'], context.previousConversations);
+      }
+      
+      console.error('대화 삭제 실패:', error);
+      showError('대화를 삭제할 수 없습니다.');
+    }
+  });
+
+  // 대화 로드 함수 분리 (재사용성을 위해)
+  const loadConversation = async (conversationId: string) => {
+    try {
+      const conversation = await conversationHistoryService.getConversationDetail(conversationId);
+      
+      // 메시지를 UI 형식으로 변환
+      const formattedMessages: Message[] = conversation.messages.map((msg: any, index: number) => ({
+        id: msg.id || `msg-${index}`,
+        content: msg.content,
+        isUser: msg.role === 'USER',
+        timestamp: msg.created_at,
+        model: msg.model,
+        agentType: conversation.agent_type,
+        citations: [],
+        sources: []
+      }));
+      
+      setMessages(formattedMessages);
+      setCurrentSessionId(conversationId);
+      
+      // 모델과 에이전트 타입도 동기화
+      if (conversation.model) {
+        const modelKey = conversation.model as LLMModel;
+        if (MODEL_MAP[modelKey]) {
+          const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+          setSelectedProvider(provider as LLMProvider);
+          setSelectedModel(modelKey);
+        }
+      }
+      
+      if (conversation.agent_type) {
+        setSelectedAgent(conversation.agent_type as AgentType);
+      }
+      
+      return conversation;
+    } catch (error) {
+      console.error('대화 로딩 실패:', error);
+      throw error;
+    }
+  };
 
   // 메시지 전송 뮤테이션 (기본 버전 - 백업용)
   const sendMessageMutation = useMutation({
@@ -449,11 +565,23 @@ export const ChatPage: React.FC = () => {
         stopTyping();
         
         // 세션 ID 업데이트 (새 세션인 경우)
-        if (response.session_id && response.session_id !== currentSessionId) {
+        const isNewSession = response.session_id && response.session_id !== currentSessionId;
+        if (isNewSession) {
           setCurrentSessionId(response.session_id);
+          
+          // 새 세션인 경우 제목 자동 생성
+          try {
+            const generatedTitle = await conversationHistoryService.generateTitle(message, model);
+            await conversationHistoryService.updateConversation(response.session_id, {
+              title: generatedTitle
+            });
+          } catch (error) {
+            console.error('제목 생성 실패:', error);
+          }
         }
         
-        // 새 메시지가 추가된 경우 대화 기록 새로고침
+        // 새 메시지가 추가된 경우 대화 기록 즉시 새로고침
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
         await refetchHistory();
         
         // 웹 검색 결과를 SearchResult 형식으로 변환
@@ -555,6 +683,7 @@ export const ChatPage: React.FC = () => {
       }
       
       // 대화 기록 새로고침
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
       await refetchHistory();
       
       showSuccess('새 대화를 시작했습니다.');
@@ -701,20 +830,22 @@ export const ChatPage: React.FC = () => {
                 showError('대화를 불러올 수 없습니다.');
               }
             }}
-            onDeleteChat={async (conversationId) => {
+            onDeleteChat={(conversationId) => {
+              if (deleteConversationMutation.isPending) {
+                showInfo('이미 삭제 중입니다. 잠시만 기다려주세요.');
+                return;
+              }
+              deleteConversationMutation.mutate(conversationId);
+            }}
+            onUpdateChat={async (conversationId, updates) => {
               try {
-                await conversationHistoryService.deleteConversation(conversationId);
+                await conversationHistoryService.updateConversation(conversationId, updates);
+                queryClient.invalidateQueries({ queryKey: ['conversations'] });
                 await refetchHistory();
-                showSuccess('대화가 삭제되었습니다.');
-                
-                // 현재 대화가 삭제된 경우 새 대화 시작
-                if (currentSessionId === conversationId) {
-                  setMessages([]);
-                  setCurrentSessionId(null);
-                }
+                showSuccess('대화 제목이 수정되었습니다.');
               } catch (error) {
-                console.error('대화 삭제 실패:', error);
-                showError('대화를 삭제할 수 없습니다.');
+                console.error('대화 제목 수정 실패:', error);
+                showError('대화 제목 수정에 실패했습니다.');
               }
             }}
             isMobile={isMobile}

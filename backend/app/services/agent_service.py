@@ -76,7 +76,7 @@ class AgentService:
                         )
                         session_id = conversation['id']
                 else:
-                    # 새 대화 생성
+                    # 새 대화 생성 - 임시 제목으로 생성
                     conversation = await conversation_history_service.create_conversation(
                         user_id=user_id,
                         title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -141,24 +141,32 @@ class AgentService:
             
             # 에이전트 선택 및 실행
             if agent_type == "none":
-                # 일반 채팅 모드 - 에이전트 없이 LLM 직접 호출
+                # 일반 채팅 모드 - 컨텍스트 포함 LLM 호출
                 from app.agents.llm_router import llm_router
-                response_text, actual_model = await llm_router.generate_response(
-                    selected_model, 
-                    message, 
-                    user_id=user_id
+                
+                # 컨텍스트 포함 응답 생성
+                cited_response = await llm_router.generate_response_with_context(
+                    message=message,
+                    model=selected_model,
+                    agent_type=agent_type,
+                    user_id=user_id,
+                    session_id=session_id,
+                    stream=False
                 )
                 
-                # AgentOutput 형태로 변환
-                from app.agents.base import AgentOutput
-                result = AgentOutput(
-                    agent_id="direct_llm",
-                    result=response_text,
-                    model_used=actual_model,
-                    timestamp=datetime.utcnow().isoformat(),
-                    metadata={"mode": "direct_chat"},
-                    execution_time_ms=0  # 실제 측정은 추후 구현
-                )
+                # CitedResponse를 AgentOutput 형태로 변환
+                class SimpleAgentOutput:
+                    def __init__(self, response_text: str, model: str):
+                        self.result = response_text
+                        self.model_used = model
+                        self.timestamp = datetime.now().isoformat()
+                        self.agent_id = "general_chat"
+                        self.metadata = {}
+                        self.execution_time_ms = 0
+                        self.citations = []
+                        self.sources = []
+                
+                result = SimpleAgentOutput(cited_response.response_text, selected_model)
                 
             elif agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
@@ -180,6 +188,31 @@ class AgentService:
                     session=db,
                     model=result.model_used
                 )
+            
+            # 새 대화인 경우 제목 자동 생성 (첫 번째 메시지인지 확인)
+            is_new_conversation = False
+            try:
+                async with AsyncSessionLocal() as db:
+                    # 대화의 메시지 개수 확인 (사용자 메시지 + AI 응답 = 2개면 새 대화)
+                    conversation_detail = await conversation_history_service.get_conversation_detail(
+                        conversation_id=session_id,
+                        user_id=user_id,
+                        session=db
+                    )
+                    if conversation_detail and len(conversation_detail.get('messages', [])) == 2:
+                        is_new_conversation = True
+                        
+                        # 제목 자동 생성
+                        await self._generate_conversation_title(
+                            session_id=session_id,
+                            user_message=message,
+                            model=model,
+                            user_id=user_id
+                        )
+            except Exception as e:
+                logger.error(f"제목 생성 실패: {e}")
+                # 제목 생성 실패해도 채팅은 계속 진행
+                pass
             
             return {
                 "response": result.result,
@@ -398,6 +431,91 @@ class AgentService:
         except Exception as e:
             logger.error(f"스트리밍 응답 생성 중 오류: {e}")
             yield f"죄송합니다. 응답 생성 중 오류가 발생했습니다: {str(e)}"
+    
+    async def _generate_conversation_title(
+        self,
+        session_id: str,
+        user_message: str, 
+        model: str,
+        user_id: str
+    ):
+        """
+        대화 제목 자동 생성
+        
+        Args:
+            session_id: 세션 ID
+            user_message: 첫 번째 사용자 메시지
+            model: 사용할 모델
+            user_id: 사용자 ID
+        """
+        try:
+            from app.agents.llm_router import llm_router
+            
+            # 제목 생성을 위한 프롬프트
+            title_prompt = f"""다음 사용자의 질문이나 요청을 바탕으로 대화의 제목을 생성해주세요.
+
+사용자 메시지: "{user_message}"
+
+제목 생성 규칙:
+1. 50자 이내로 작성
+2. 구체적이고 명확하게 작성
+3. 한국어로 작성
+4. 질문의 핵심 내용을 담아서 작성
+5. "대화", "채팅" 같은 일반적인 단어는 피하고 구체적인 내용으로 작성
+
+제목만 응답하고 다른 설명은 하지 마세요."""
+
+            # LLM을 통해 제목 생성
+            response_content, used_model = await llm_router.generate_response(
+                model_name=model,
+                prompt=title_prompt,
+                user_id=user_id,
+                conversation_id=None
+            )
+            
+            # 생성된 제목 정리
+            generated_title = response_content.strip()
+            
+            # 따옴표 제거
+            if generated_title.startswith('"') and generated_title.endswith('"'):
+                generated_title = generated_title[1:-1]
+            
+            # 길이 제한
+            if len(generated_title) > 50:
+                generated_title = generated_title[:47] + "..."
+            
+            # 제목 업데이트
+            from app.db.session import AsyncSessionLocal
+            from app.services.conversation_history_service import conversation_history_service
+            
+            async with AsyncSessionLocal() as db:
+                await conversation_history_service.update_conversation_title(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    title=generated_title,
+                    session=db
+                )
+                
+            logger.info(f"대화 제목 자동 생성 완료: {generated_title}")
+            
+        except Exception as e:
+            logger.error(f"제목 자동 생성 실패: {e}")
+            # 실패 시 기본 제목으로 폴백
+            try:
+                fallback_title = user_message[:30] + ("..." if len(user_message) > 30 else "")
+                from app.db.session import AsyncSessionLocal
+                from app.services.conversation_history_service import conversation_history_service
+                
+                async with AsyncSessionLocal() as db:
+                    await conversation_history_service.update_conversation_title(
+                        conversation_id=session_id,
+                        user_id=user_id,
+                        title=fallback_title,
+                        session=db
+                    )
+                logger.info(f"기본 제목으로 폴백: {fallback_title}")
+            except Exception as fallback_error:
+                logger.error(f"폴백 제목 설정 실패: {fallback_error}")
 
 
 # 서비스 인스턴스

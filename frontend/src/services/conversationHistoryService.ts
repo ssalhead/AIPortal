@@ -369,6 +369,23 @@ class ConversationHistoryService {
   exportConversationAsJson(conversation: ConversationDetail): string {
     return JSON.stringify(conversation, null, 2);
   }
+
+  /**
+   * LLM을 사용하여 대화 제목 자동 생성
+   */
+  async generateTitle(message: string, model: string = 'gemini'): Promise<string> {
+    try {
+      const response = await apiService.httpClient.post('/chat/generate-title', {
+        message,
+        model
+      });
+      return response.data.title;
+    } catch (error) {
+      console.error('제목 생성 실패:', error);
+      // 실패 시 기본 제목 생성
+      return message.length > 30 ? message.substring(0, 30) + '...' : message;
+    }
+  }
 }
 
 export const conversationHistoryService = new ConversationHistoryService();

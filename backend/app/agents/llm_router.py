@@ -2,12 +2,13 @@
 LLM 모델 라우터
 """
 
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 from langchain_aws import ChatBedrock
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.language_models import BaseLanguageModel
 import logging
 import boto3
+from datetime import datetime
 
 from app.core.config import settings
 from app.agents.mock_llm import mock_llm
@@ -132,6 +133,10 @@ class LLMRouter:
                     )
                     logger.info("Google Gemini 1.0 Pro 모델 초기화 완료")
                     
+                    # Gemini 기본 별칭 (gemini-pro로 매핑)
+                    self._models["gemini"] = self._models["gemini-pro"]
+                    logger.info("Google Gemini 기본 별칭 설정 완료")
+                    
                 except Exception as e:
                     logger.error(f"Google Gemini 초기화 실패: {e}")
             else:
@@ -164,8 +169,8 @@ class LLMRouter:
         Returns:
             언어 모델 인스턴스 또는 None
         """
-        # 우선순위: claude-4 > claude-3.7 > claude-3.5 > claude > gemini-pro > claude-haiku > gemini-flash > gemini-1.0
-        for model_name in ["claude-4", "claude-3.7", "claude-3.5", "claude", "gemini-pro", "claude-haiku", "gemini-flash", "gemini-1.0"]:
+        # 우선순위: gemini-pro > gemini-flash > gemini-1.0 > claude-4 > claude-3.7 > claude-3.5 > claude > claude-haiku (Gemini 우선 - 안정성)
+        for model_name in ["gemini-pro", "gemini-flash", "gemini-1.0", "claude-4", "claude-3.7", "claude-3.5", "claude", "claude-haiku"]:
             if model_name in self._models:
                 logger.info(f"Fallback 모델로 {model_name} 사용")
                 return self._models[model_name]
@@ -289,6 +294,140 @@ class LLMRouter:
                 f"{mock_model_name} (API 오류로 인한 Mock 응답)"
             )
             return response, mock_model_name
+
+    async def generate_response_with_context(
+        self,
+        message: str,
+        model: str,
+        agent_type: str,
+        user_id: str,
+        session_id: Optional[str] = None,
+        stream: bool = False
+    ):
+        """
+        컨텍스트를 포함한 응답 생성
+        
+        Args:
+            message: 사용자 메시지
+            model: 사용할 모델
+            agent_type: 에이전트 타입
+            user_id: 사용자 ID
+            session_id: 세션 ID (컨텍스트 로딩용)
+            stream: 스트리밍 여부
+            
+        Returns:
+            응답 객체
+        """
+        try:
+            # 컨텍스트 포함 프롬프트 구성
+            final_prompt = await self._build_prompt_with_context(
+                message=message,
+                session_id=session_id,
+                user_id=user_id,
+                agent_type=agent_type
+            )
+            
+            # 기존 generate_response 메서드 호출
+            response_content, used_model = await self.generate_response(
+                model_name=model,
+                prompt=final_prompt,
+                user_id=user_id,
+                conversation_id=session_id
+            )
+            
+            # 응답 객체 구성
+            from app.models.citation import CitedResponse
+            
+            return CitedResponse(
+                response_text=response_content,
+                sources=[],
+                total_sources=0,
+                citation_count=0,
+                citations=[]
+            )
+            
+        except Exception as e:
+            logger.error(f"컨텍스트 포함 응답 생성 실패: {e}")
+            # 컨텍스트 없이 재시도
+            response_content, used_model = await self.generate_response(
+                model_name=model,
+                prompt=message,
+                user_id=user_id,
+                conversation_id=session_id
+            )
+            
+            from app.models.citation import CitedResponse
+            
+            return CitedResponse(
+                response_text=response_content,
+                sources=[],
+                total_sources=0,
+                citation_count=0,
+                citations=[]
+            )
+    
+    async def _build_prompt_with_context(
+        self,
+        message: str,
+        session_id: Optional[str],
+        user_id: str,
+        agent_type: str
+    ) -> str:
+        """컨텍스트를 포함한 프롬프트 구성"""
+        
+        # 세션 ID가 없으면 컨텍스트 없이 진행 (제목 생성 시에는 session_id가 None)
+        if not session_id:
+            return message
+        
+        try:
+            from app.services.conversation_memory_service import conversation_memory_service
+            
+            # 대화 컨텍스트 조회
+            context_data = await conversation_memory_service.get_conversation_context(
+                conversation_id=session_id,
+                user_id=user_id
+            )
+            
+            context_prompt = context_data.get('context_prompt', '')
+            total_tokens = context_data.get('total_tokens', 0)
+            
+            # 토큰 제한 확인
+            if total_tokens > 3000:  # 토큰 제한 초과시 컨텍스트 단축
+                logger.warning(f"컨텍스트 토큰 수 초과: {total_tokens}, 단축 처리")
+                # 단기메모리만 사용
+                short_term = context_data.get('short_term_memory', [])
+                if short_term:
+                    context_prompt = self._build_short_context(short_term[-2:])  # 최근 2개만
+            
+            # 컨텍스트가 있는 경우 프롬프트에 포함
+            if context_prompt:
+                final_prompt = f"""{context_prompt}
+
+현재 사용자 질문: {message}
+
+위 대화 맥락을 고려하여 답변해주세요."""
+                
+                logger.info(f"컨텍스트 포함 프롬프트 생성 완료 (예상 토큰: {total_tokens})")
+                return final_prompt
+            else:
+                return message
+                
+        except Exception as e:
+            logger.error(f"컨텍스트 구성 실패: {e}")
+            return message
+    
+    def _build_short_context(self, qa_pairs: List[Dict]) -> str:
+        """단축된 컨텍스트 구성"""
+        if not qa_pairs:
+            return ""
+        
+        context_parts = ["[최근 대화]"]
+        for pair in qa_pairs:
+            context_parts.append(f"사용자: {pair['question']}")
+            if pair['answer']:
+                context_parts.append(f"AI: {pair['answer']}")
+        
+        return "\n".join(context_parts)
 
     async def stream_response(
         self,

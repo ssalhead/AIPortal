@@ -19,6 +19,7 @@ interface SidebarProps {
   chatHistory?: ChatHistoryItem[];
   onSelectChat?: (chatId: string) => void;
   onDeleteChat?: (chatId: string) => void;
+  onUpdateChat?: (chatId: string, updates: { title: string }) => void;
   isMobile?: boolean;
 }
 
@@ -33,20 +34,62 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ],
   onSelectChat,
   onDeleteChat,
+  onUpdateChat,
   isMobile = false,
 }) => {
   const [hoveredChat, setHoveredChat] = useState<string | null>(null);
+  const [editingChat, setEditingChat] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState<string>('');
   const location = useLocation();
 
   const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
-    
-    if (diffInHours < 1) return '방금 전';
-    if (diffInHours < 24) return `${diffInHours}시간 전`;
-    if (diffInHours < 48) return '어제';
-    return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+    try {
+      const date = new Date(timestamp);
+      
+      // 유효한 날짜인지 확인
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      
+      // yyyy-mm-dd HH:MM:SS 형식으로 포맷
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+      console.error('날짜 포맷 오류:', error, 'timestamp:', timestamp);
+      return 'Invalid Date';
+    }
+  };
+
+  // 제목 편집 시작
+  const handleEditStart = (chatId: string, currentTitle: string) => {
+    setEditingChat(chatId);
+    setEditingTitle(currentTitle);
+  };
+
+  // 제목 편집 저장
+  const handleEditSave = async (chatId: string) => {
+    if (editingTitle.trim() && editingTitle !== chatHistory.find(chat => chat.id === chatId)?.title) {
+      try {
+        // 제목 업데이트 API 호출
+        await onUpdateChat?.(chatId, { title: editingTitle.trim() }); 
+      } catch (error) {
+        console.error('제목 업데이트 실패:', error);
+      }
+    }
+    setEditingChat(null);
+    setEditingTitle('');
+  };
+
+  // 제목 편집 취소
+  const handleEditCancel = () => {
+    setEditingChat(null);
+    setEditingTitle('');
   };
 
   return (
@@ -140,9 +183,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <MessageSquare className="w-5 h-5 text-slate-500 dark:text-slate-400 flex-shrink-0" />
                 {(isOpen || isMobile) && (
                   <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
-                      {chat.title}
-                    </p>
+                    {editingChat === chat.id ? (
+                      <input
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleEditSave(chat.id);
+                          } else if (e.key === 'Escape') {
+                            handleEditCancel();
+                          }
+                        }}
+                        onBlur={() => handleEditSave(chat.id)}
+                        className="w-full text-sm font-medium bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-blue-500 rounded px-2 py-1"
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <p 
+                        className="truncate text-sm font-medium text-slate-700 dark:text-slate-300 cursor-text"
+                        onDoubleClick={() => handleEditStart(chat.id, chat.title)}
+                        title="더블클릭하여 제목 편집"
+                      >
+                        {chat.title}
+                      </p>
+                    )}
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       {formatTime(chat.timestamp)}
                     </p>

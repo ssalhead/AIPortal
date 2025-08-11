@@ -443,3 +443,69 @@ async def update_session_title(
             status_code=404,
             detail="세션을 찾을 수 없거나 권한이 없습니다."
         )
+
+
+class TitleGenerateRequest(BaseModel):
+    """제목 생성 요청 모델"""
+    message: str
+    model: str = "gemini"
+
+
+@router.post("/generate-title")
+async def generate_conversation_title(
+    request: TitleGenerateRequest,
+    current_user: dict = Depends(get_current_active_user)
+):
+    """
+    대화 제목 자동 생성
+    
+    Args:
+        request: 제목 생성 요청 (첫 번째 사용자 메시지)
+        current_user: 현재 사용자 정보
+        
+    Returns:
+        생성된 제목
+    """
+    try:
+        from app.agents.llm_router import llm_router
+        
+        # 제목 생성을 위한 프롬프트
+        title_prompt = f"""다음 사용자의 질문이나 요청을 바탕으로 대화의 제목을 생성해주세요.
+
+사용자 메시지: "{request.message}"
+
+제목 생성 규칙:
+1. 50자 이내로 작성
+2. 구체적이고 명확하게 작성
+3. 한국어로 작성
+4. 질문의 핵심 내용을 담아서 작성
+5. "대화", "채팅" 같은 일반적인 단어는 피하고 구체적인 내용으로 작성
+
+제목만 응답하고 다른 설명은 하지 마세요."""
+
+        # LLM을 통해 제목 생성
+        response_content, used_model = await llm_router.generate_response(
+            model_name=request.model,
+            prompt=title_prompt,
+            user_id=current_user["id"],
+            conversation_id=None
+        )
+        
+        # 생성된 제목 정리
+        generated_title = response_content.strip()
+        
+        # 따옴표 제거
+        if generated_title.startswith('"') and generated_title.endswith('"'):
+            generated_title = generated_title[1:-1]
+        
+        # 길이 제한
+        if len(generated_title) > 50:
+            generated_title = generated_title[:47] + "..."
+            
+        return {"title": generated_title}
+        
+    except Exception as e:
+        logger.error(f"제목 생성 실패: {e}")
+        # 실패 시 기본 제목 반환
+        fallback_title = request.message[:30] + ("..." if len(request.message) > 30 else "")
+        return {"title": fallback_title}
