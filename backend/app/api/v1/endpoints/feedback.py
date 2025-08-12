@@ -52,7 +52,7 @@ async def submit_feedback(
     try:
         feedback = await feedback_service.submit_feedback(
             session=db,
-            user_id=str(current_user.id),
+            user_id=str(current_user["id"]),
             message_id=request.message_id,
             feedback_type=request.feedback_type,
             category=request.category,
@@ -94,7 +94,7 @@ async def get_my_feedbacks(
     try:
         result = await feedback_service.get_user_feedbacks(
             session=db,
-            user_id=str(current_user.id),
+            user_id=str(current_user["id"]),
             limit=limit,
             skip=skip,
             feedback_type=feedback_type,
@@ -117,7 +117,7 @@ async def get_message_feedback(
         feedback = await feedback_service.get_message_feedback(
             session=db,
             message_id=message_id,
-            user_id=str(current_user.id)
+            user_id=str(current_user["id"])
         )
         
         if not feedback:
@@ -138,7 +138,7 @@ async def get_my_feedback_profile(
     try:
         profile = await feedback_service.get_user_feedback_profile(
             session=db,
-            user_id=str(current_user.id)
+            user_id=str(current_user["id"])
         )
         return profile
         

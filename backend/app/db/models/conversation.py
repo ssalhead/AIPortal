@@ -5,6 +5,7 @@ from sqlalchemy.orm import relationship
 import uuid
 import enum
 from app.db.base import Base
+from app.utils.timezone import now_kst
 
 class MessageRole(str, enum.Enum):
     USER = "user"
@@ -31,8 +32,8 @@ class Conversation(Base):
     status = Column(SQLEnum(ConversationStatus), default=ConversationStatus.ACTIVE)
     metadata_ = Column(JSON, default=dict)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=now_kst)
+    updated_at = Column(DateTime, default=now_kst, onupdate=now_kst)
     
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
@@ -56,7 +57,7 @@ class Message(Base):
     metadata_ = Column(JSON, default=dict)
     attachments = Column(JSON, default=list)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=now_kst)
+    updated_at = Column(DateTime, default=now_kst, onupdate=now_kst)
     
     conversation = relationship("Conversation", back_populates="messages")

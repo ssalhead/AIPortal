@@ -6,6 +6,7 @@ from typing import Dict, Any, List, AsyncGenerator
 import logging
 import asyncio
 from datetime import datetime
+from app.utils.timezone import now_kst
 
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
@@ -69,7 +70,7 @@ class AgentService:
                         # 대화가 없으면 새로 생성
                         conversation = await conversation_history_service.create_conversation(
                             user_id=user_id,
-                            title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                            title=f"대화 {now_kst().strftime('%Y-%m-%d %H:%M')}",
                             session=db,
                             model=model,
                             agent_type=agent_type
@@ -79,7 +80,7 @@ class AgentService:
                     # 새 대화 생성 - 임시 제목으로 생성
                     conversation = await conversation_history_service.create_conversation(
                         user_id=user_id,
-                        title=f"대화 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        title=f"대화 {now_kst().strftime('%Y-%m-%d %H:%M')}",
                         session=db,
                         model=model,
                         agent_type=agent_type
@@ -159,7 +160,7 @@ class AgentService:
                     def __init__(self, response_text: str, model: str):
                         self.result = response_text
                         self.model_used = model
-                        self.timestamp = datetime.now().isoformat()
+                        self.timestamp = now_kst().isoformat()
                         self.agent_id = "general_chat"
                         self.metadata = {}
                         self.execution_time_ms = 0
@@ -214,6 +215,15 @@ class AgentService:
                 # 제목 생성 실패해도 채팅은 계속 진행
                 pass
             
+            # 대화 메시지 조회 (사용자 메시지 + AI 응답 포함)
+            async with AsyncSessionLocal() as db:
+                conversation_detail = await conversation_history_service.get_conversation_detail(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    session=db
+                )
+                messages = conversation_detail.get('messages', []) if conversation_detail else []
+            
             return {
                 "response": result.result,
                 "agent_used": result.agent_id,
@@ -224,7 +234,9 @@ class AgentService:
                 "metadata": result.metadata,
                 "execution_time_ms": result.execution_time_ms,
                 "citations": getattr(result, 'citations', []),  # citations 추가
-                "sources": getattr(result, 'sources', [])  # sources 추가
+                "sources": getattr(result, 'sources', []),  # sources 추가
+                "messages": messages,  # 전체 대화 메시지 포함
+                "user_message": message  # 현재 사용자 메시지도 포함 (프론트엔드 참조용)
             }
             
         except Exception as e:
