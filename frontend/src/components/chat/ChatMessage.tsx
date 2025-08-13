@@ -49,8 +49,14 @@ interface ChatMessageProps {
   searchResults?: SearchResult[];
   /** 검색 쿼리 (웹 검색 에이전트용) */
   searchQuery?: string;
+  /** 원본 사용자 질문 (맥락 통합 검색 시) */
+  originalQuery?: string;
+  /** 맥락이 적용되었는지 여부 */
+  hasContext?: boolean;
   /** 인용 표시 모드 */
   citationMode?: 'full' | 'preview' | 'none';
+  /** 커스텀 타이핑 메시지 */
+  customTypingMessage?: string;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -71,7 +77,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   sources = [],
   searchResults = [],
   searchQuery = '',
+  originalQuery,
+  hasContext = false,
   citationMode = 'preview',
+  customTypingMessage,
 }) => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [rating, setRating] = useState<'up' | 'down' | null>(null);
@@ -158,7 +167,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
   // 검색 중이거나 타이핑 중이면 진행 상태 표시
-  if ((searchStatus?.isSearching || searchSteps.length > 0 || isTyping) && !isUser) {
+  if ((searchStatus?.isSearching || isTyping) && !isUser) {
     return (
       <div className="flex items-start space-x-3 max-w-4xl">
         {/* AI 아바타 */}
@@ -168,15 +177,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         
         {/* 진행 상태 표시 */}
         <div className="flex-1 min-w-0 max-w-3xl">
-          {searchSteps.length > 0 ? (
-            /* 고급 검색 진행 상태 표시기 */
-            <SearchProgressIndicator
-              steps={searchSteps}
-              isVisible={true}
-              showDetails={true}
-              compact={false}
-            />
-          ) : searchStatus?.isSearching ? (
+          {searchStatus?.isSearching ? (
             /* 기존 검색 진행 상태 (폴백) */
             <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
               <div className="p-4 space-y-3">
@@ -215,19 +216,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               </div>
             </div>
           ) : (
-            /* 기본 타이핑 인디케이터 */
-            <div className="bg-white dark:bg-slate-800 rounded-3xl rounded-tl-lg px-6 py-4 shadow-sm border border-slate-200 dark:border-slate-700 min-w-0 max-w-md">
-              <div className="flex items-center space-x-1">
+            /* 간단한 타이핑 인디케이터 - 동적 메시지 지원 */
+            <div className="bg-white dark:bg-slate-800 rounded-3xl rounded-tl-lg px-6 py-4 shadow-sm border border-slate-200 dark:border-slate-700 min-w-0 max-w-3xl">
+              <div className="flex items-center space-x-3">
                 <div className="flex space-x-1">
                   <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
                   <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                   <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
                 </div>
-                {model && (
-                  <span className="text-xs text-slate-500 ml-2">
-                    {model.replace('claude', 'Claude').replace('gemini', 'Gemini')}
-                  </span>
-                )}
+                <span className="text-sm text-slate-600 dark:text-slate-400">
+                  {customTypingMessage || `${model?.replace('claude', 'Claude').replace('gemini', 'Gemini')} 모델로 응답 생성 중...`}
+                </span>
               </div>
             </div>
           )}
@@ -431,6 +430,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 defaultCollapsed={false}
                 maxResults={3}
                 showMetadata={true}
+                originalQuery={originalQuery}
+                hasContext={hasContext}
               />
             </div>
           )}

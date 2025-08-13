@@ -50,7 +50,11 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({
   }, []);
 
   const formatTimeAgo = (dateString: string) => {
-    return formatDistanceToNow(new Date(dateString), {
+    // UTC 시간을 한국 시간으로 변환
+    const utcDate = new Date(dateString);
+    const kstDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000));
+    
+    return formatDistanceToNow(kstDate, {
       addSuffix: true,
       locale: ko
     });

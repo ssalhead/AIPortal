@@ -19,6 +19,7 @@ class TaskType(Enum):
     WEB_SEARCH = "web_search"
     DEEP_RESEARCH = "deep_research"
     MULTIMODAL_RAG = "multimodal_rag"
+    CANVAS = "canvas"
     GENERAL_CHAT = "general_chat"
 
 
@@ -90,9 +91,10 @@ class SupervisorAgent(BaseAgent):
 1. web_search: 최신 정보 검색, 실시간 데이터 조회, 일반적인 정보 검색
 2. deep_research: 심층적인 분석이 필요한 복잡한 주제, 종합적인 보고서 작성
 3. multimodal_rag: 문서나 이미지 분석, 파일 기반 질문 답변
-4. general_chat: 일반적인 대화, 간단한 질문, 창작 요청
+4. canvas: 이미지 생성, 마인드맵, 메모, 시각적 창작 요청
+5. general_chat: 일반적인 대화, 간단한 질문, 창작 요청
 
-다음 중 하나만 반환해주세요: web_search, deep_research, multimodal_rag, general_chat
+다음 중 하나만 반환해주세요: web_search, deep_research, multimodal_rag, canvas, general_chat
 """
             
             response, _ = await llm_router.generate_response(model, prompt)
@@ -105,6 +107,8 @@ class SupervisorAgent(BaseAgent):
                 return TaskType.DEEP_RESEARCH
             elif task_type_str == "multimodal_rag":
                 return TaskType.MULTIMODAL_RAG
+            elif task_type_str == "canvas":
+                return TaskType.CANVAS
             else:
                 return TaskType.GENERAL_CHAT
                 
@@ -185,6 +189,83 @@ class SupervisorAgent(BaseAgent):
             task_type.value: worker.name 
             for task_type, worker in self.workers.items()
         }
+    
+    async def analyze_and_suggest_agent(self, query: str, current_agent: str, model: str = "gemini") -> Dict[str, Any]:
+        """현재 에이전트와 다른 더 적합한 에이전트를 제안"""
+        try:
+            # 사용자 쿼리 분석
+            suggested_task_type = await self._analyze_task_type(query, model)
+            suggested_agent = suggested_task_type.value
+            
+            # 현재 에이전트와 다른 경우에만 제안
+            if suggested_agent != current_agent and suggested_agent != "general_chat":
+                # 상세 분석으로 신뢰도 및 이유 생성
+                confidence, reason = await self._analyze_suggestion_details(
+                    query, current_agent, suggested_agent, model
+                )
+                
+                return {
+                    "needs_switch": True,
+                    "suggested_agent": suggested_agent,
+                    "confidence": confidence,
+                    "reason": reason,
+                    "current_agent": current_agent
+                }
+            
+            return {"needs_switch": False}
+            
+        except Exception as e:
+            self.logger.error(f"에이전트 제안 분석 실패: {e}")
+            return {"needs_switch": False, "error": str(e)}
+    
+    async def _analyze_suggestion_details(self, query: str, current_agent: str, suggested_agent: str, model: str) -> tuple[float, str]:
+        """제안 상세 분석 - 신뢰도와 이유 생성"""
+        try:
+            agent_descriptions = {
+                "none": "일반 채팅",
+                "web_search": "웹 검색을 통한 최신 정보 조회",
+                "deep_research": "심층적인 분석과 연구",
+                "canvas": "이미지 생성, 마인드맵, 시각적 창작",
+                "multimodal_rag": "문서 및 이미지 분석"
+            }
+            
+            prompt = f"""
+사용자 질문을 분석하여 에이전트 전환이 필요한 이유와 신뢰도를 평가해주세요.
+
+사용자 질문: "{query}"
+현재 에이전트: {agent_descriptions.get(current_agent, current_agent)}
+제안 에이전트: {agent_descriptions.get(suggested_agent, suggested_agent)}
+
+다음 형식으로 응답해주세요:
+신뢰도: [0.1-1.0 사이의 숫자]
+이유: [한 문장으로 간단명료하게]
+
+예시:
+신뢰도: 0.9
+이유: 최신 주가 정보 조회는 웹 검색이 더 정확한 결과를 제공할 수 있습니다
+"""
+            
+            response, _ = await llm_router.generate_response(model, prompt)
+            lines = response.strip().split('\n')
+            
+            confidence = 0.7  # 기본값
+            reason = f"{agent_descriptions.get(suggested_agent, suggested_agent)}가 이 작업에 더 적합할 수 있습니다"
+            
+            for line in lines:
+                if line.startswith('신뢰도:'):
+                    try:
+                        confidence = float(line.split(':')[1].strip())
+                        confidence = max(0.1, min(1.0, confidence))  # 범위 제한
+                    except:
+                        pass
+                elif line.startswith('이유:'):
+                    reason = line.split(':', 1)[1].strip()
+            
+            return confidence, reason
+            
+        except Exception as e:
+            self.logger.warning(f"제안 상세 분석 실패: {e}")
+            return 0.7, f"{suggested_agent.replace('_', ' ')}이 더 적합할 수 있습니다"
 
 
 # Supervisor 에이전트 인스턴스

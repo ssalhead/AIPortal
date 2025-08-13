@@ -35,6 +35,10 @@ interface SearchProgressIndicatorProps {
   onClose?: () => void;
   showDetails?: boolean;
   compact?: boolean;
+  // 맥락 통합 정보 추가
+  originalQuery?: string;
+  contextIntegratedQuery?: string;
+  hasContext?: boolean;
 }
 
 export const SearchProgressIndicator: React.FC<SearchProgressIndicatorProps> = ({
@@ -42,7 +46,10 @@ export const SearchProgressIndicator: React.FC<SearchProgressIndicatorProps> = (
   isVisible,
   onClose,
   showDetails = false,
-  compact = false
+  compact = false,
+  originalQuery,
+  contextIntegratedQuery,
+  hasContext = false
 }) => {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
 
@@ -154,9 +161,18 @@ export const SearchProgressIndicator: React.FC<SearchProgressIndicatorProps> = (
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 검색 진행 상황
               </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {completedSteps}/{totalSteps} 단계 완료
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {completedSteps}/{totalSteps} 단계 완료
+                </p>
+                {hasContext && (
+                  <div className="flex items-center gap-1">
+                    <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
+                      맥락 통합
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           
@@ -183,6 +199,28 @@ export const SearchProgressIndicator: React.FC<SearchProgressIndicatorProps> = (
             />
           </div>
         </div>
+
+        {/* 맥락 통합 정보 */}
+        {hasContext && originalQuery && contextIntegratedQuery && (
+          <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
+            <div className="flex items-center gap-2 mb-2">
+              <Brain className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                맥락 통합 검색
+              </span>
+            </div>
+            <div className="text-xs space-y-1">
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">원본:</span>{' '}
+                <span className="text-gray-800 dark:text-gray-200">"{originalQuery}"</span>
+              </div>
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">통합:</span>{' '}
+                <span className="text-blue-700 dark:text-blue-300 font-medium">"{contextIntegratedQuery}"</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 단계별 진행 상황 */}

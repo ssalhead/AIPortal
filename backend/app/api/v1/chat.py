@@ -9,7 +9,8 @@ from pydantic import BaseModel
 import json
 import asyncio
 import logging
-from asyncio import Queue
+from app.utils.timezone import now_kst
+# from asyncio import Queue  # 더 이상 사용하지 않음
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class ChatResponse(BaseModel):
     citations: List[Dict[str, Any]] = []
     sources: List[Dict[str, Any]] = []
     citation_stats: Optional[Dict[str, Any]] = None
+    # 메타데이터 추가 (맥락 통합 정보 포함)
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @router.post("/", response_model=ChatResponse)
@@ -140,7 +143,8 @@ async def send_message(
         session_id=result.get("session_id"),  # 세션 ID 포함
         citations=citations or [],
         sources=(sources or [])[:chat_message.max_sources],  # 최대 출처 개수 제한
-        citation_stats=citation_stats
+        citation_stats=citation_stats,
+        metadata=result.get("metadata")  # 메타데이터 포함 (맥락 통합 정보)
     )
 
 
@@ -165,30 +169,80 @@ async def send_message_stream(
     
     async def generate():
         try:
-            # 진행 상태 저장
-            progress_events = []
-            
-            def progress_callback(step: str, progress: int):
-                """진행 상태 콜백"""
-                progress_events.append({'step': step, 'progress': progress})
+            # 진행 상태를 즉시 전송하기 위한 콜백
+            def progress_callback(step: str, progress: int, metadata: dict = None):
+                """진행 상태 콜백 - 진행 상태 즉시 처리 (맥락 통합 정보 지원)"""
+                # 진행 상태는 백엔드에서 처리만 하고, 딜레이 없이 넘어감
+                pass
             
             # 시작 이벤트
             yield f"data: {json.dumps({'type': 'start', 'data': {'message': '채팅 처리를 시작합니다...'}})}\n\n"
             
-            # 메시지 처리 (진행상태는 콜백으로 수집)
-            result = await agent_service.execute_chat(
-                message=chat_message.message,
-                model=chat_message.model,
-                agent_type=chat_message.agent_type,
-                user_id=current_user["id"],
-                session_id=chat_message.session_id,
-                progress_callback=progress_callback
-            )
+            # 스트리밍 응답 생성을 위한 실제 LLM 호출
+            from app.agents.llm_router import llm_router
             
-            # 수집된 진행상태 전송
-            for progress_data in progress_events:
-                yield f"data: {json.dumps({'type': 'progress', 'data': progress_data})}\n\n"
-                await asyncio.sleep(0.1)  # 시각적 효과를 위한 짧은 지연
+            # 모델 선택 (agent_service의 로직과 동일)
+            if chat_message.model == "auto":
+                task_type_mapping = {
+                    "web_search": "speed",
+                    "supervisor": "reasoning",
+                    "auto": "general"
+                }
+                task_type = task_type_mapping.get(chat_message.agent_type, "general")
+                selected_model = llm_router.get_optimal_model(task_type, len(chat_message.message))
+            else:
+                selected_model = chat_message.model
+                
+            # 대화 컨텍스트 처리 (간소화)
+            prompt = chat_message.message
+            if chat_message.agent_type == "web_search":
+                prompt = f"웹 검색 요청: {chat_message.message}\n\n최신 정보를 검색하여 정확하고 유용한 답변을 제공해주세요."
+            elif chat_message.agent_type == "supervisor":
+                prompt = f"전문 분석 요청: {chat_message.message}\n\n상황에 맞는 최적의 방법으로 분석하여 도움이 되는 답변을 제공해주세요."
+            
+            # 실제 스트리밍 응답 생성
+            full_response = ""
+            chunk_count = 0
+            
+            async for chunk in llm_router.stream_response(selected_model, prompt):
+                chunk_count += 1
+                full_response += chunk
+                
+                # 청크 데이터 실시간 전송
+                chunk_data = {
+                    "type": "chunk",
+                    "data": {
+                        "text": chunk,
+                        "index": chunk_count - 1,
+                        "is_final": False
+                    }
+                }
+                yield f"data: {json.dumps(chunk_data)}\n\n"
+            
+            # 마지막 청크 표시
+            if chunk_count > 0:
+                final_chunk_data = {
+                    "type": "chunk",
+                    "data": {
+                        "text": "",
+                        "index": chunk_count,
+                        "is_final": True
+                    }
+                }
+                yield f"data: {json.dumps(final_chunk_data)}\n\n"
+            
+            # 가상의 result 객체 생성 (agent_service와 호환성)
+            result = {
+                "response": full_response,
+                "agent_used": chat_message.agent_type or "general",
+                "model_used": selected_model,
+                "timestamp": now_kst().isoformat(),
+                "user_id": current_user["id"],
+                "session_id": chat_message.session_id,
+                "citations": [],
+                "sources": [],
+                "metadata": {"streaming": True, "chunk_count": chunk_count}
+            }
             
             # 인용 정보 처리 - 에이전트에서 직접 제공된 citations와 sources 사용
             citations = result.get("citations", [])
@@ -219,7 +273,24 @@ async def send_message_stream(
                 except Exception as e:
                     citation_stats = None
             
-            # 최종 결과 전송
+            # 메타데이터 전송 (스트리밍 완료 후)
+            metadata_result = {
+                "type": "metadata",
+                "data": {
+                    "agent_used": result["agent_used"],
+                    "model_used": result["model_used"],
+                    "timestamp": result["timestamp"],
+                    "user_id": result["user_id"],
+                    "session_id": result.get("session_id"),
+                    "citations": citations,
+                    "sources": sources[:chat_message.max_sources],
+                    "citation_stats": citation_stats,
+                    "metadata": result.get("metadata")
+                }
+            }
+            yield f"data: {json.dumps(metadata_result)}\n\n"
+            
+            # 최종 완료 결과 전송 (전체 응답 텍스트 포함)
             final_result = {
                 "type": "result",
                 "data": {
@@ -228,10 +299,11 @@ async def send_message_stream(
                     "model_used": result["model_used"],
                     "timestamp": result["timestamp"],
                     "user_id": result["user_id"],
-                    "session_id": result.get("session_id"),  # 세션 ID 포함
+                    "session_id": result.get("session_id"),
                     "citations": citations,
                     "sources": sources[:chat_message.max_sources],
-                    "citation_stats": citation_stats
+                    "citation_stats": citation_stats,
+                    "metadata": result.get("metadata")
                 }
             }
             yield f"data: {json.dumps(final_result)}\n\n"

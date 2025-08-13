@@ -29,6 +29,10 @@ interface SearchResultsCardProps {
   maxResults?: number;
   /** 메타데이터 표시 여부 */
   showMetadata?: boolean;
+  /** 원본 사용자 질문 (맥락 통합 검색 시) */
+  originalQuery?: string;
+  /** 맥락이 적용되었는지 여부 */
+  hasContext?: boolean;
 }
 
 export const SearchResultsCard: React.FC<SearchResultsCardProps> = ({
@@ -38,6 +42,8 @@ export const SearchResultsCard: React.FC<SearchResultsCardProps> = ({
   defaultCollapsed = false,
   maxResults = 5,
   showMetadata = true,
+  originalQuery,
+  hasContext = false,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const [showAll, setShowAll] = useState(false);
@@ -95,7 +101,19 @@ export const SearchResultsCard: React.FC<SearchResultsCardProps> = ({
               </div>
             </h3>
             <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-400 mt-1">
-              <span>"{query}" 검색</span>
+              {hasContext && originalQuery ? (
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
+                    맥락 통합
+                  </span>
+                  <span>"{query}" 검색</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    (원본: "{originalQuery}")
+                  </span>
+                </div>
+              ) : (
+                <span>"{query}" 검색</span>
+              )}
               <div className="flex items-center gap-1">
                 <Hash className="w-3 h-3" />
                 <span>{results.length}개 결과</span>

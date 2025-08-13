@@ -10,19 +10,19 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { WelcomeScreen } from '../components/ui/WelcomeScreen';
 import { ToastContainer, useToast } from '../components/ui/Toast';
 import { TypingIndicator } from '../components/ui/TypingIndicator';
+import { AgentSuggestionModal } from '../components/ui/AgentSuggestionModal';
 import { Resizer } from '../components/ui/Resizer';
-import { SearchProgressIndicator } from '../components/SearchProcess/SearchProgressIndicator';
 import { useLoading } from '../contexts/LoadingContext';
 import { useResponsive, useTouchDevice } from '../hooks/useResponsive';
 import { useSidebarWidth } from '../hooks/useSidebarWidth';
 import { apiService } from '../services/api';
 import { conversationHistoryService } from '../services/conversationHistoryService';
+import { agentSuggestionService } from '../services/agentSuggestionService';
 import { Star, Zap, Menu, X } from 'lucide-react';
 import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
 import { SIDEBAR_WIDTHS, CANVAS_SPLIT } from '../constants/layout';
 import type { SearchResult } from '../components/search/SearchResultsCard';
-import type { SearchStep } from '../components/SearchProcess/SearchProgressIndicator';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 
@@ -37,12 +37,13 @@ interface Message {
   sources?: Source[];
   searchResults?: SearchResult[];
   searchQuery?: string;
+  originalQuery?: string;
+  hasContext?: boolean;
   searchStatus?: {
     isSearching: boolean;
     currentStep: string;
     progress: number;
   };
-  searchSteps?: SearchStep[];
 }
 
 export const ChatPage: React.FC = () => {
@@ -64,8 +65,22 @@ export const ChatPage: React.FC = () => {
     currentStep: string;
     progress: number;
   } | null>(null);
-  const [searchSteps, setSearchSteps] = useState<SearchStep[]>([]);
+  const [currentProgressMessage, setCurrentProgressMessage] = useState<string>('');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // 청크 스트리밍 상태
+  const [streamingMessage, setStreamingMessage] = useState<string>('');
+  const [isStreamingResponse, setIsStreamingResponse] = useState<boolean>(false);
+  
+  // 에이전트 제안 관련 상태
+  const [agentSuggestion, setAgentSuggestion] = useState<{
+    suggested_agent: AgentType;
+    reason: string;
+    confidence: number;
+    current_agent: AgentType;
+    pendingMessage?: string;
+  } | null>(null);
+  const [isShowingSuggestion, setIsShowingSuggestion] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -155,13 +170,8 @@ export const ChatPage: React.FC = () => {
           showInfo('새로운 대화를 시작해보세요.');
         }
       } 
-      // 선택되지 않은 대화가 삭제되었지만, 현재 화면이 빈 상태인 경우
-      else if (!currentSessionId && updatedHistory.length > 0) {
-        // 가장 최근 대화로 자동 이동
-        const latestChat = updatedHistory[0];
-        await loadConversation(latestChat.id);
-        showInfo(`"${latestChat.title}" 대화를 불러왔습니다.`);
-      }
+      // 선택되지 않은 대화가 삭제된 경우 WelcomeScreen 유지
+      // 사용자가 명시적으로 대화를 선택할 때까지 빈 상태 유지
     },
     onError: (error, deletedConversationId, context) => {
       // 에러 발생 시 이전 상태로 롤백
@@ -268,21 +278,23 @@ export const ChatPage: React.FC = () => {
         });
       }
 
-      // AI 응답 추가 (인용 정보 포함)
-      const aiMessage: Message = {
+      // AI 응답만 추가 (사용자 메시지는 이미 표시됨)
+      const aiResponse: Message = {
         id: `ai-${Date.now()}`,
         content: response.response,
         isUser: false,
         timestamp: response.timestamp,
-        agentType: response.agent_used,
         model: response.model_used,
+        agentType: response.agent_used,
         citations: response.citations || [],
         sources: response.sources || [],
         searchResults: searchResults,
-        searchQuery: searchQuery,
+        searchQuery: searchQuery
       };
-
-      setMessages(prev => [...prev, aiMessage]);
+      
+      console.log('🔍 일반채팅 - AI 응답 추가:', aiResponse);
+      setMessages(prev => [...prev, aiResponse]);
+      console.log('🔍 일반채팅 - AI 응답 추가 완료');
       // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
     },
     onError: (error: any) => {
@@ -315,253 +327,223 @@ export const ChatPage: React.FC = () => {
     },
   });
 
-  // 채팅 히스토리를 메시지로 변환
-  useEffect(() => {
-    if (chatHistory && chatHistory.length > 0) {
-      const convertedMessages: Message[] = [];
-      
-      chatHistory.forEach((item: ConversationHistory) => {
-        // 사용자 메시지
-        convertedMessages.push({
-          id: `user-history-${item.id}`,
-          content: item.message,
-          isUser: true,
-          timestamp: item.timestamp,
-        });
-        
-        // AI 응답
-        convertedMessages.push({
-          id: `ai-history-${item.id}`,
-          content: item.response,
-          isUser: false,
-          timestamp: item.timestamp,
-          agentType: item.agent_type,
-          model: item.model,
-        });
-      });
-      
-      setMessages(convertedMessages);
-      
-      // Toast 표시 제거 - 조용히 기록을 불러옴
-      // if (convertedMessages.length > 0) {
-      //   showInfo(`${convertedMessages.length / 2}개의 대화를 불러왔습니다.`);
-      // }
-    }
-    // 채팅 히스토리가 빈 배열인 경우 메시지를 빈 배열로 초기화하되 Toast는 표시하지 않음
-    else if (chatHistory && chatHistory.length === 0) {
-      setMessages([]);
-    }
-  }, [chatHistory?.length]); // 길이만 감지하여 무한 루프 방지
+  // 자동 메시지 로딩 로직 제거 - 사용자가 명시적으로 대화를 선택했을 때만 로드
+  // 새로고침 시 항상 WelcomeScreen에서 시작하도록 변경
 
   // 새 메시지가 추가되면 스크롤을 맨 아래로
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = async (message: string, model: LLMModel, agentType: AgentType) => {
-    // 웹 검색 에이전트인 경우 진행 상태 시뮬레이션
-    if (agentType === 'web_search') {
-      // 타이핑 시작
-      startTyping(`${model} 모델로 웹 검색 중...`, model);
-      
-      // 사용자 메시지 먼저 추가
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        content: message,
-        isUser: true,
-        timestamp: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, userMessage]);
+  // 진행 상태 메시지 매핑
+  const getProgressMessage = (stepId?: string, metadata?: any): string => {
+    switch (stepId) {
+      case 'query_analysis':
+        return '🔍 검색어를 분석하는 중...';
+      case 'query_generation':
+        return '🔍 최적 검색어를 생성하는 중...';
+      case 'parallel_search':
+        // 맥락 통합 검색어가 있으면 표시
+        if (metadata?.has_context && metadata?.context_integrated_query) {
+          return `🔍 "${metadata.context_integrated_query}" 검색 중...`;
+        }
+        return '🔍 웹에서 정보를 찾는 중...';
+      case 'result_filtering':
+        return '🔍 검색 결과를 정리하는 중...';
+      case 'result_ranking':
+        return '🔍 결과를 분석하는 중...';
+      case 'response_generation':
+        return '🤖 AI 답변을 생성하는 중...';
+      default:
+        return '🔍 검색 중...';
+    }
+  };
 
-      // 상세한 검색 진행 단계 시뮬레이션
-      const simulateDetailedProgress = () => {
-        const initialSteps: SearchStep[] = [
-          {
-            id: 'query_analysis',
-            name: '검색어 분석',
-            description: '사용자 질문을 분석하고 검색 키워드를 추출합니다',
-            status: 'pending',
-            startTime: new Date(),
-            progress: 0,
-            details: []
-          },
-          {
-            id: 'query_generation', 
-            name: '검색 쿼리 생성',
-            description: '최적화된 검색 쿼리를 생성합니다',
-            status: 'pending',
-            startTime: undefined,
-            progress: 0,
-            details: []
-          },
-          {
-            id: 'parallel_search',
-            name: '병렬 웹 검색',
-            description: '여러 검색 엔진에서 동시에 검색을 수행합니다',
-            status: 'pending',
-            startTime: undefined,
-            progress: 0,
-            details: []
-          },
-          {
-            id: 'result_filtering',
-            name: '결과 필터링',
-            description: '검색 결과의 품질을 평가하고 필터링합니다',
-            status: 'pending',
-            startTime: undefined,
-            progress: 0,
-            details: []
-          },
-          {
-            id: 'result_ranking',
-            name: '결과 순위화',
-            description: '관련성과 신뢰도에 따라 결과를 순위화합니다',
-            status: 'pending',
-            startTime: undefined,
-            progress: 0,
-            details: []
-          },
-          {
-            id: 'response_generation',
-            name: 'AI 답변 생성',
-            description: '검색 결과를 바탕으로 종합적인 답변을 생성합니다',
-            status: 'pending',
-            startTime: undefined,
-            progress: 0,
-            details: []
-          }
-        ];
+  // 에이전트 제안 분석
+  const analyzeAgentSuggestion = async (message: string, currentAgent: AgentType, model: LLMModel) => {
+    try {
+      const suggestion = await agentSuggestionService.analyzeSuggestionWithTypes(
+        message,
+        currentAgent,
+        model
+      );
 
-        setSearchSteps(initialSteps);
-
-        // 단계별 진행 시뮬레이션
-        const progressSteps = [
-          { 
-            stepId: 'query_analysis', 
-            delay: 500, 
-            duration: 800,
-            details: [
-              '질문 의도 파악 중...',
-              '핵심 키워드 추출 중...',
-              '검색 전략 수립 중...'
-            ],
-            metadata: { keywords: message.split(' ').slice(0, 3) }
-          },
-          { 
-            stepId: 'query_generation', 
-            delay: 1200, 
-            duration: 600,
-            details: [
-              '검색 엔진 최적화 쿼리 생성',
-              '동의어 및 관련 용어 추가',
-              '검색 범위 설정'
-            ],
-            metadata: { queries: ['주요 쿼리', '보조 쿼리 1', '보조 쿼리 2'] }
-          },
-          { 
-            stepId: 'parallel_search', 
-            delay: 1800, 
-            duration: 2000,
-            details: [
-              'Google 검색 실행 중...',
-              'Bing 검색 실행 중...',
-              '추가 소스 검색 중...',
-              '검색 결과 수집 완료'
-            ],
-            metadata: { sources: 4, totalResults: 28 }
-          },
-          { 
-            stepId: 'result_filtering', 
-            delay: 3800, 
-            duration: 1000,
-            details: [
-              '중복 결과 제거 중...',
-              '품질 점수 계산 중...',
-              '관련성 평가 중...',
-              '신뢰도 검증 중...'
-            ],
-            metadata: { filteredResults: 12, qualityScore: 8.5 }
-          },
-          { 
-            stepId: 'result_ranking', 
-            delay: 4800, 
-            duration: 800,
-            details: [
-              '관련성 점수 계산',
-              '신뢰도 가중치 적용',
-              '최종 순위 결정'
-            ],
-            metadata: { topResults: 5, avgRelevance: 9.2 }
-          },
-          { 
-            stepId: 'response_generation', 
-            delay: 5600, 
-            duration: 1500,
-            details: [
-              '핵심 정보 추출 중...',
-              '답변 구조 설계 중...',
-              '인용 정보 정리 중...',
-              '최종 답변 생성 중...'
-            ],
-            metadata: { citations: 3, confidence: 0.92 }
-          }
-        ];
-
-        progressSteps.forEach(({ stepId, delay, duration, details, metadata }) => {
-          // 단계 시작
-          setTimeout(() => {
-            setSearchSteps(prev => prev.map(step => 
-              step.id === stepId 
-                ? { 
-                    ...step, 
-                    status: 'in_progress', 
-                    startTime: new Date(),
-                    details: details,
-                    metadata: metadata
-                  }
-                : step
-            ));
-
-            // 진행률 업데이트 (애니메이션)
-            let progress = 0;
-            const progressInterval = setInterval(() => {
-              progress += Math.random() * 25;
-              if (progress >= 100) {
-                progress = 100;
-                clearInterval(progressInterval);
-                
-                // 단계 완료
-                setTimeout(() => {
-                  setSearchSteps(prev => prev.map(step => 
-                    step.id === stepId 
-                      ? { ...step, status: 'completed', endTime: new Date(), progress: 100 }
-                      : step
-                  ));
-                }, 200);
-              } else {
-                setSearchSteps(prev => prev.map(step => 
-                  step.id === stepId ? { ...step, progress } : step
-                ));
-              }
-            }, duration / 10);
-          }, delay);
+      if (suggestion.needs_switch && suggestion.suggested_agent && suggestion.confidence && suggestion.reason) {
+        setAgentSuggestion({
+          suggested_agent: suggestion.suggested_agent as AgentType,
+          reason: suggestion.reason,
+          confidence: suggestion.confidence,
+          current_agent: currentAgent,
+          pendingMessage: message
         });
-      };
+        setIsShowingSuggestion(true);
+        return true; // 제안이 있음을 반환
+      }
+      
+      return false; // 제안이 없음
+    } catch (error) {
+      console.error('에이전트 제안 분석 실패:', error);
+      return false;
+    }
+  };
 
-      // 상세 진행 상태 시뮬레이션 시작
-      simulateDetailedProgress();
+  // 에이전트 제안 수락
+  const handleAcceptSuggestion = () => {
+    if (agentSuggestion) {
+      setSelectedAgent(agentSuggestion.suggested_agent);
+      setIsShowingSuggestion(false);
+      
+      // 에이전트 전환 알림 및 즉시 메시지 전송
+      if (agentSuggestion.pendingMessage) {
+        // 에이전트 전환 알림
+        showInfo(`${AGENT_TYPE_MAP[agentSuggestion.suggested_agent].name}로 전환하여 처리합니다.`);
+        
+        // 메시지 전송 (서버 응답에서 사용자 메시지 + AI 응답 모두 처리)
+        processSendMessage(agentSuggestion.pendingMessage, selectedModel, agentSuggestion.suggested_agent);
+      }
+      
+      setAgentSuggestion(null);
+    }
+  };
+
+  // 에이전트 제안 거절
+  const handleDeclineSuggestion = () => {
+    if (agentSuggestion) {
+      setIsShowingSuggestion(false);
+      
+      // 현재 에이전트로 메시지 전송
+      if (agentSuggestion.pendingMessage) {
+        processSendMessage(agentSuggestion.pendingMessage, selectedModel, agentSuggestion.current_agent);
+      }
+      
+      setAgentSuggestion(null);
+    }
+  };
+
+  // 실제 메시지 전송 처리 (에이전트 제안 체크 후 실행)
+  const handleSendMessage = async (message: string, model: LLMModel, agentType: AgentType) => {
+    // 에이전트 제안 분석 (일반 채팅에서만 - 이미 특정 에이전트가 선택된 경우는 제외)
+    if (agentType === 'none') {
+      const hasSuggestion = await analyzeAgentSuggestion(message, agentType, model);
+      if (hasSuggestion) {
+        return; // 제안 모달이 표시되므로 여기서 중단
+      }
+    }
+
+    // 제안이 없거나 이미 특정 에이전트가 선택된 경우 바로 전송
+    await processSendMessage(message, model, agentType);
+  };
+
+  // 실제 메시지 전송 로직 (기존 handleSendMessage 내용)
+  const processSendMessage = async (message: string, model: LLMModel, agentType: AgentType) => {
+    // 🔥 사용자 메시지 즉시 표시 (기존 UX 복원)
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      content: message,
+      isUser: true,
+      timestamp: new Date().toISOString(),
+      model: model,
+      agentType: undefined,
+      citations: [],
+      sources: []
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    // 모든 에이전트에서 스트리밍 사용
+    {
+      // 에이전트 타입에 따른 초기 메시지 설정
+      let initialMessage = `${model} 모델로 응답 생성 중...`;
+      if (agentType === 'web_search') {
+        initialMessage = `${model} 모델로 웹 검색 중...`;
+      } else if (agentType === 'deep_research') {
+        initialMessage = `${model} 모델로 심층 리서치 중...`;
+      } else if (agentType === 'canvas') {
+        initialMessage = `${model} 모델로 Canvas 작업 중...`;
+      }
+      
+      // 타이핑 시작
+      startTyping(initialMessage, model);
+      
+      // 사용자 메시지는 이미 표시됨, AI 응답만 추가 예정
+
+
+      // 간단한 진행 메시지만 관리
+      setCurrentProgressMessage(getProgressMessage('query_analysis'));
 
       try {
-        const response = await apiService.sendChatMessage({
-          message,
-          model,
-          agent_type: agentType,
-          session_id: currentSessionId,
-        });
+        // 스트리밍 방식으로 실제 진행 상태를 받아서 처리
+        let finalResponse: ChatResponse | null = null;
+        let streamingError: string | null = null;
+        
+        try {
+          // 스트리밍 API를 Promise로 감싸서 완료 대기
+          await new Promise<void>((resolve, reject) => {
+            apiService.sendChatMessageWithProgress(
+              {
+                message,
+                model,
+                agent_type: agentType,
+                session_id: currentSessionId,
+                include_citations: true,
+              },
+              // 진행 상태 콜백 - 간단한 메시지만 업데이트
+              (step: string, progress: number, metadata?: any) => {
+                console.log('🚀 실제 진행 상태 수신:', step, progress, metadata);
+                
+                // 백엔드에서 제공한 step_id 사용
+                const stepId = metadata?.step_id;
+                
+                // 진행 메시지 업데이트
+                const progressMessage = getProgressMessage(stepId, metadata);
+                setCurrentProgressMessage(progressMessage);
+                console.log('📝 진행 메시지 업데이트:', progressMessage);
+              },
+              // 최종 결과 콜백
+              (result: ChatResponse) => {
+                console.log('✅ 최종 결과 수신:', result);
+                finalResponse = result;
+                resolve(); // Promise 완료 신호
+              },
+              // 에러 콜백  
+              (error: string) => {
+                console.error('❌ 스트리밍 에러:', error);
+                streamingError = error;
+                reject(new Error(error)); // Promise 에러 신호
+              }
+            );
+          });
+        } catch (streamError) {
+          console.error('🔄 스트리밍 실패, 일반 API로 fallback:', streamError);
+          
+          // 스트리밍 실패 시 일반 API로 fallback
+          const fallbackResponse = await apiService.sendChatMessage({
+            message,
+            model,
+            agent_type: agentType,
+            session_id: currentSessionId,
+            include_citations: true,
+          });
+          
+          finalResponse = fallbackResponse;
+        }
+        
+        if (streamingError && !finalResponse) {
+          throw new Error(`메시지 처리 중 오류가 발생했습니다: ${streamingError}`);
+        }
+        
+        if (!finalResponse) {
+          console.error('❌ finalResponse가 null입니다. streamingError:', streamingError);
+          throw new Error('응답을 받지 못했습니다');
+        }
+        
+        console.log('✅ finalResponse 확인 완료:', finalResponse);
+        const response = finalResponse;
 
         // 검색 진행 상태 및 타이핑 인디케이터 종료
         setSearchProgress(null);
-        setSearchSteps([]);
+        setCurrentProgressMessage('');
+        setIsStreamingResponse(false);
+        setStreamingMessage('');
         stopTyping();
         
         // 세션 ID 업데이트 (새 세션인 경우)
@@ -588,8 +570,21 @@ export const ChatPage: React.FC = () => {
         let searchResults: SearchResult[] = [];
         let searchQuery = '';
         
+        // 백엔드 메타데이터에서 맥락 통합 검색어 확인 (모든 에이전트 타입에서 사용)
+        const metadata = response.metadata || {};
+        const contextIntegratedQueries = metadata.context_integrated_queries || [];
+        const hasContext = metadata.has_conversation_context || false;
+        
         if (response.agent_used === 'web_search' && response.citations) {
-          searchQuery = message; // 원본 사용자 쿼리를 검색 쿼리로 사용
+          // 맥락 통합 검색어가 있으면 사용, 없으면 원본 쿼리 사용
+          if (hasContext && contextIntegratedQueries.length > 0) {
+            searchQuery = contextIntegratedQueries[0]; // 첫 번째 최적 검색어 사용
+            console.log('맥락 통합 검색어 사용:', searchQuery, '(원본:', message, ')');
+          } else {
+            searchQuery = message; // 원본 사용자 쿼리 폴백
+            console.log('원본 검색어 사용:', searchQuery);
+          }
+          
           searchResults = response.citations.map((citation: any, index: number) => ({
             id: citation.id || `search_${index + 1}`,
             title: citation.title || '제목 없음',
@@ -604,31 +599,44 @@ export const ChatPage: React.FC = () => {
           console.log('웹 검색 결과 변환 완료:', {
             searchQuery,
             searchResults_count: searchResults.length,
-            sample_result: searchResults[0]
+            sample_result: searchResults[0],
+            hasContext,
+            contextIntegratedQueries
           });
         }
 
-        // AI 응답 추가 (인용 정보 포함)
-        const aiMessage: Message = {
+        // AI 응답만 추가 (사용자 메시지는 이미 표시됨)
+        const aiResponse: Message = {
           id: `ai-${Date.now()}`,
           content: response.response,
           isUser: false,
           timestamp: response.timestamp,
-          agentType: response.agent_used,
           model: response.model_used,
+          agentType: response.agent_used,
           citations: response.citations || [],
           sources: response.sources || [],
           searchResults: searchResults,
           searchQuery: searchQuery,
+          originalQuery: hasContext ? message : undefined,
+          hasContext: hasContext
         };
-
-        setMessages(prev => [...prev, aiMessage]);
+        
+        console.log('🔍 웹검색 - AI 응답 추가:', aiResponse);
+        console.log('🔍 현재 메시지 상태:', messages.length, '개');
+        
+        setMessages(prev => {
+          const newMessages = [...prev, aiResponse];
+          console.log('🔍 새로운 메시지 상태:', newMessages.length, '개');
+          return newMessages;
+        });
+        
+        console.log('🔍 웹검색 - AI 응답 추가 완료');
         // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
         
       } catch (error: any) {
         // 검색 진행 상태 및 타이핑 인디케이터 종료
         setSearchProgress(null);
-        setSearchSteps([]);
+        setCurrentProgressMessage('');
         stopTyping();
         
         // 에러 메시지 추가
@@ -645,33 +653,13 @@ export const ChatPage: React.FC = () => {
         const errorMsg = error?.response?.data?.message || '메시지 전송 중 오류가 발생했습니다.';
         showError(errorMsg);
       }
-    } else {
-      // 기타 에이전트는 기존 방식 사용
-      // 타이핑 시작
-      startTyping(`${model} 모델로 응답 생성 중...`, model);
-      
-      // 사용자 메시지 먼저 추가
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        content: message,
-        isUser: true,
-        timestamp: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, userMessage]);
-      
-      sendMessageMutation.mutate({
-        message,
-        model,
-        agent_type: agentType,
-        session_id: currentSessionId,
-      });
     }
   };
 
   const handleNewChat = async () => {
     try {
       // 새 세션 생성
-      const newSession = await apiService.httpClient.post('/v1/chat/sessions/new');
+      const newSession = await apiService.httpClient.post('/chat/sessions/new');
       const sessionData = newSession.data;
       
       setMessages([]);
@@ -757,10 +745,6 @@ export const ChatPage: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toast 컨테이너 */}
-      <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
-      
-      
       {/* 모바일 오버레이 */}
       {isMobile && isSidebarOpen && (
         <div 
@@ -786,8 +770,13 @@ export const ChatPage: React.FC = () => {
             chatHistory={chatHistory}
             onSelectChat={async (conversationId) => {
               try {
+                console.log('🔄 대화 선택:', conversationId);
+                console.log('🔄 기존 currentSessionId:', currentSessionId);
+                console.log('🔄 기존 메시지 수:', messages.length);
+                
                 // 선택된 대화의 메시지 로드
                 const conversation = await conversationHistoryService.getConversationDetail(conversationId);
+                console.log('🔄 로드된 대화 데이터:', conversation);
                 
                 // 메시지를 UI 형식으로 변환
                 const formattedMessages: Message[] = conversation.messages.map(msg => ({
@@ -801,8 +790,10 @@ export const ChatPage: React.FC = () => {
                   sources: []
                 }));
                 
+                console.log('🔄 변환된 메시지들:', formattedMessages);
                 setMessages(formattedMessages);
                 setCurrentSessionId(conversationId);
+                console.log('🔄 대화 로딩 완료 - 새 sessionId:', conversationId);
                 
                 // 모델과 에이전트 타입도 동기화
                 if (conversation.model) {
@@ -911,16 +902,6 @@ export const ChatPage: React.FC = () => {
                 </div>
               )}
               
-              {/* 검색 진행 상태 표시 (상단) */}
-              {(searchProgress?.isSearching || searchSteps.length > 0) && (
-                <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
-                  <SearchProgressIndicator 
-                    steps={searchSteps}
-                    isVisible={true}
-                    compact={true}
-                  />
-                </div>
-              )}
               
               {/* 채팅 메시지 영역 */}
               <div className="flex-1 overflow-y-auto">
@@ -943,27 +924,20 @@ export const ChatPage: React.FC = () => {
                           sources={msg.sources}
                           searchResults={msg.searchResults}
                           searchQuery={msg.searchQuery}
+                          originalQuery={msg.originalQuery}
+                          hasContext={msg.hasContext}
                           citationMode={msg.agentType === 'web_search' ? 'none' : 'preview'}
                         />
                       ))}
                       
-                      {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
-                      {(searchProgress || searchSteps.length > 0) && (
-                        <ChatMessage
-                          message=""
-                          isUser={false}
-                          searchStatus={searchProgress}
-                          searchSteps={searchSteps}
-                          model={selectedModel}
-                        />
-                      )}
-                      
-                      {!searchProgress && searchSteps.length === 0 && isTyping && (
+                      {/* 타이핑 인디케이터 - 진행 메시지 포함 */}
+                      {(currentProgressMessage || isTyping) && (
                         <ChatMessage
                           message=""
                           isUser={false}
                           isTyping={true}
                           model={currentModel}
+                          customTypingMessage={currentProgressMessage || `${currentModel} 모델로 응답 생성 중...`}
                         />
                       )}
                       
@@ -1087,25 +1061,24 @@ export const ChatPage: React.FC = () => {
                       />
                     ))}
                     
-                    {/* 검색 진행 상태 또는 타이핑 인디케이터 */}
-                    {(searchProgress || searchSteps.length > 0) && (
+                    {/* 타이핑 인디케이터 또는 스트리밍 메시지 */}
+                    {isStreamingResponse ? (
                       <ChatMessage
-                        message=""
+                        message={streamingMessage}
                         isUser={false}
-                        searchStatus={searchProgress}
-                        searchSteps={searchSteps}
-                        model={selectedModel}
+                        isTyping={false}
+                        model={currentModel}
+                        agentType={selectedAgent}
                       />
-                    )}
-                    
-                    {!searchProgress && searchSteps.length === 0 && isTyping && (
+                    ) : (currentProgressMessage || isTyping) ? (
                       <ChatMessage
                         message=""
                         isUser={false}
                         isTyping={true}
                         model={currentModel}
+                        customTypingMessage={currentProgressMessage || `${currentModel} 모델로 응답 생성 중...`}
                       />
-                    )}
+                    ) : null}
                     
                     <div ref={messagesEndRef} />
                   </div>
@@ -1129,6 +1102,19 @@ export const ChatPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 에이전트 제안 모달 */}
+      {agentSuggestion && (
+        <AgentSuggestionModal
+          suggestion={agentSuggestion}
+          onAccept={handleAcceptSuggestion}
+          onDecline={handleDeclineSuggestion}
+          isVisible={isShowingSuggestion}
+        />
+      )}
+
+      {/* 토스트 컨테이너 */}
+      <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
     </div>
   );
 };

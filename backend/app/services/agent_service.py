@@ -12,6 +12,7 @@ from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
 from app.agents.workers.web_search import web_search_agent
 from app.agents.workers.canvas import canvas_agent
+from app.services.conversation_context_service import universal_context_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -110,34 +111,40 @@ class AgentService:
             else:
                 selected_model = model
             
-            # 대화 컨텍스트 가져오기 (최근 메시지들)
-            conversation_context = ""
+            # 대화 맥락 추출 (새로운 ConversationContext 서비스 사용)
+            conversation_context = None
+            conversation_context_text = ""
+            logger.info(f"🔍 대화 맥락 추출 시작 - session_id: {session_id}, message: {message[:100]}...")
             async with AsyncSessionLocal() as db:
-                conversation_detail = await conversation_history_service.get_conversation_detail(
-                    conversation_id=session_id,
-                    user_id=user_id,
-                    session=db,
-                    message_limit=10  # 최근 10개 메시지만
+                conversation_context = await universal_context_analyzer.extract_conversation_context(
+                    session_id=session_id,
+                    current_query=message,
+                    db_session=db,
+                    model=selected_model
                 )
-                if conversation_detail and conversation_detail.get('messages'):
+                logger.info(f"🔍 맥락 추출 완료 - domain: {conversation_context.domain if conversation_context else 'None'}")
+                
+                # 기존 호환성을 위한 텍스트 형태 컨텍스트도 생성
+                if conversation_context and conversation_context.recent_messages:
                     context_messages = []
-                    for msg in conversation_detail['messages'][-6:]:  # 최근 6개만 사용
-                        role = "사용자" if msg['role'] == 'USER' else "어시스턴트"
+                    for msg in conversation_context.recent_messages[-4:]:  # 최근 4개만 사용
+                        role = "사용자" if msg['role'] == 'user' else "어시스턴트"
                         context_messages.append(f"{role}: {msg['content']}")
                     if context_messages:
-                        conversation_context = "\n".join(context_messages)
+                        conversation_context_text = "\n".join(context_messages)
             
-            # 컨텍스트가 있으면 메시지에 포함
+            # 컨텍스트가 있으면 메시지에 포함 (기존 호환성)
             enhanced_message = message
-            if conversation_context:
-                enhanced_message = f"대화 기록:\n{conversation_context}\n\n현재 질문: {message}"
+            if conversation_context_text:
+                enhanced_message = f"대화 기록:\n{conversation_context_text}\n\n현재 질문: {message}"
             
             # 입력 데이터 생성
             agent_input = AgentInput(
                 query=enhanced_message,
                 context=context or {"has_conversation_context": bool(conversation_context)},
                 user_id=user_id,
-                session_id=session_id
+                session_id=session_id,
+                conversation_context=conversation_context  # 새로운 맥락 정보 추가
             )
             
             # 에이전트 선택 및 실행
@@ -179,7 +186,19 @@ class AgentService:
                     raise ValueError(f"알 수 없는 에이전트 타입: {agent_type}")
                 result = await agent.execute(agent_input, selected_model, progress_callback)
             
-            # AI 응답을 대화 히스토리에 추가
+            # AI 응답을 대화 히스토리에 추가 (citations/sources 메타데이터 포함)
+            response_metadata = {}
+            
+            # 에이전트 결과에서 citations와 sources 정보 추출
+            if hasattr(result, 'citations') and result.citations:
+                response_metadata['citations'] = result.citations
+            if hasattr(result, 'sources') and result.sources:
+                response_metadata['sources'] = result.sources
+            if hasattr(result, 'search_results') and result.search_results:
+                response_metadata['search_results'] = result.search_results
+            if hasattr(result, 'metadata') and result.metadata:
+                response_metadata.update(result.metadata)
+                
             async with AsyncSessionLocal() as db:
                 await conversation_history_service.add_message(
                     conversation_id=session_id,
@@ -187,7 +206,8 @@ class AgentService:
                     role=MessageRole.ASSISTANT,
                     content=result.result,
                     session=db,
-                    model=result.model_used
+                    model=result.model_used,
+                    metadata_=response_metadata if response_metadata else None
                 )
             
             # 새 대화인 경우 제목 자동 생성 (첫 번째 메시지인지 확인)
@@ -223,6 +243,11 @@ class AgentService:
                     session=db
                 )
                 messages = conversation_detail.get('messages', []) if conversation_detail else []
+                logger.info(f"🔍 메시지 조회 완료 - session_id: {session_id}, 메시지 수: {len(messages)}")
+                if messages:
+                    logger.info(f"🔍 마지막 메시지: {messages[-1]}")
+                else:
+                    logger.warning(f"⚠️ 메시지가 조회되지 않음 - conversation_detail: {conversation_detail}")
             
             return {
                 "response": result.result,

@@ -419,31 +419,131 @@ export const ConversationDetailView: React.FC<ConversationDetailViewProps> = ({
 
               {/* 메시지 메타데이터 */}
               <div className={`
-                mt-3 pt-2 border-t flex items-center justify-between text-xs
+                mt-3 pt-2 border-t flex flex-col space-y-2 text-xs
                 ${message.role === 'USER' 
                   ? 'border-blue-500 text-blue-100' 
                   : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'
                 }
               `}>
-                <div className="flex items-center space-x-3">
-                  <span className="flex items-center">
-                    <Clock className="w-3 h-3 mr-1" />
-                    {new Date(message.created_at).toLocaleString('ko-KR')}
-                  </span>
-                  
-                  {(message.tokens_input || message.tokens_output) && (
+                {/* 기본 메타데이터 */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
                     <span className="flex items-center">
-                      <Zap className="w-3 h-3 mr-1" />
-                      {formatTokenCount(message.tokens_input, message.tokens_output)} 토큰
+                      <Clock className="w-3 h-3 mr-1" />
+                      {new Date(message.created_at).toLocaleString('ko-KR')}
                     </span>
-                  )}
-                  
-                  {message.latency_ms && (
-                    <span>
-                      {message.latency_ms}ms
-                    </span>
-                  )}
+                    
+                    {(message.tokens_input || message.tokens_output) && (
+                      <span className="flex items-center">
+                        <Zap className="w-3 h-3 mr-1" />
+                        {formatTokenCount(message.tokens_input, message.tokens_output)} 토큰
+                      </span>
+                    )}
+                    
+                    {message.latency_ms && (
+                      <span>
+                        {message.latency_ms}ms
+                      </span>
+                    )}
+                  </div>
                 </div>
+
+                {/* 검색 출처 정보 (citations 및 sources) */}
+                {message.metadata && (
+                  message.metadata.citations || 
+                  message.metadata.sources || 
+                  message.metadata.search_results
+                ) && (
+                  <div className={`
+                    p-2 rounded border text-xs
+                    ${message.role === 'USER' 
+                      ? 'border-blue-400 bg-blue-500/10' 
+                      : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50'
+                    }
+                  `}>
+                    <div className="flex items-center mb-1">
+                      <Search className="w-3 h-3 mr-1" />
+                      <span className="font-medium">검색 출처</span>
+                    </div>
+                    
+                    {/* Sources 표시 */}
+                    {message.metadata.sources && Array.isArray(message.metadata.sources) && message.metadata.sources.length > 0 && (
+                      <div className="space-y-1">
+                        {message.metadata.sources.slice(0, 3).map((source: any, idx: number) => (
+                          <div key={idx} className="flex items-start space-x-2">
+                            <span className="text-xs text-gray-400">•</span>
+                            <div className="flex-1 min-w-0">
+                              {source.url ? (
+                                <a 
+                                  href={source.url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className={`
+                                    text-xs hover:underline truncate block
+                                    ${message.role === 'USER' 
+                                      ? 'text-blue-200 hover:text-white' 
+                                      : 'text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300'
+                                    }
+                                  `}
+                                  title={source.title || source.url}
+                                >
+                                  {source.title || source.url}
+                                </a>
+                              ) : (
+                                <span className="text-xs truncate block" title={source.title}>
+                                  {source.title}
+                                </span>
+                              )}
+                              {source.domain && (
+                                <span className={`
+                                  text-xs opacity-75
+                                  ${message.role === 'USER' ? 'text-blue-200' : 'text-gray-500 dark:text-gray-400'}
+                                `}>
+                                  ({source.domain})
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {message.metadata.sources.length > 3 && (
+                          <div className={`
+                            text-xs mt-1
+                            ${message.role === 'USER' ? 'text-blue-200' : 'text-gray-500 dark:text-gray-400'}
+                          `}>
+                            +{message.metadata.sources.length - 3}개 출처 더 보기
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* 맥락 통합 검색어 정보 */}
+                    {message.metadata.has_conversation_context && message.metadata.context_integrated_queries && (
+                      <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                        <div className="flex items-center mb-1">
+                          <span className={`
+                            text-xs px-2 py-0.5 rounded
+                            ${message.role === 'USER' 
+                              ? 'bg-blue-400 text-white' 
+                              : 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
+                            }
+                          `}>
+                            맥락 통합
+                          </span>
+                        </div>
+                        {message.metadata.original_query && (
+                          <div className="text-xs opacity-75 mb-1">
+                            원본: {message.metadata.original_query}
+                          </div>
+                        )}
+                        {Array.isArray(message.metadata.context_integrated_queries) && message.metadata.context_integrated_queries.length > 0 && (
+                          <div className="text-xs">
+                            통합 검색: {message.metadata.context_integrated_queries.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -20,6 +20,10 @@ export interface ChatMessage {
   agent_type: string;
   timestamp?: string;
   user_id?: string;
+  session_id?: string;
+  include_citations?: boolean;
+  max_sources?: number;
+  min_confidence?: number;
 }
 
 // 채팅 응답 타입
@@ -32,6 +36,13 @@ export interface ChatResponse {
   citations?: Citation[];
   sources?: Source[];
   citation_stats?: CitationStats;
+  metadata?: {
+    search_queries?: string[];
+    original_query?: string;
+    context_integrated_queries?: string[];
+    has_conversation_context?: boolean;
+    [key: string]: any;
+  };
 }
 
 // 인용 타입

@@ -161,6 +161,10 @@ class WebSearchAgent(BaseAgent):
         """다중 검색어 기반 지능형 웹 검색 실행"""
         start_time = time.time()
         
+        # 원본 쿼리 및 대화 맥락 정보 저장
+        original_query = input_data.query
+        conversation_context = input_data.conversation_context
+        
         if not self.validate_input(input_data):
             raise ValueError("유효하지 않은 입력 데이터")
         
@@ -168,7 +172,11 @@ class WebSearchAgent(BaseAgent):
             try:
                 # 0단계: URL 정보 분석 (5%)
                 if progress_callback:
-                    progress_callback("사용자 요청 분석 중...", 5)
+                    progress_callback("사용자 요청 분석 중...", 5, {
+                        "step_id": "query_analysis",
+                        "step_name": "검색어 분석",
+                        "description": "사용자 질문을 분석하고 검색 키워드를 추출합니다"
+                    })
                 url_info = self._extract_url_info(input_data.query)
                 
                 # 1단계: 다중 검색어 생성 (15%)
@@ -178,27 +186,48 @@ class WebSearchAgent(BaseAgent):
                         "site_specific": "사이트별 검색어 분석 및 생성 중...",
                         "url_crawl": "URL 크롤링 검색어 분석 및 생성 중..."
                     }
-                    progress_callback(search_type_msg.get(url_info["search_type"], "검색어 분석 및 생성 중..."), 15)
-                search_queries = await self._generate_multiple_search_queries(input_data.query, model, url_info)
+                    progress_callback(search_type_msg.get(url_info["search_type"], "검색어 분석 및 생성 중..."), 15, {
+                        "step_id": "query_generation",
+                        "step_name": "검색 쿼리 생성",
+                        "description": "최적화된 검색 쿼리를 생성합니다"
+                    })
+                search_queries = await self._generate_multiple_search_queries(input_data.query, model, url_info, input_data.conversation_context)
                 
                 # 2단계: 병렬 웹 검색 실행 (60%)
                 if progress_callback:
-                    progress_callback(f"다중 검색 실행 중... ({len(search_queries)}개 검색어)", 60)
-                all_search_results = await self._execute_parallel_searches(search_queries, session, progress_callback)
+                    progress_callback(f"다중 검색 실행 중... ({len(search_queries)}개 검색어)", 60, {
+                        "step_id": "parallel_search",
+                        "step_name": "병렬 웹 검색",
+                        "description": "여러 검색 엔진에서 동시에 검색을 수행합니다",
+                        "search_queries": [q.query for q in search_queries]
+                    })
+                all_search_results = await self._execute_parallel_searches(search_queries, session, progress_callback, conversation_context, original_query)
                 
                 # 3단계: 결과 통합 및 중복 제거 (75%)
                 if progress_callback:
-                    progress_callback("검색 결과 통합 및 필터링 중...", 75)
+                    progress_callback("검색 결과 통합 및 필터링 중...", 75, {
+                        "step_id": "result_filtering",
+                        "step_name": "결과 필터링",
+                        "description": "검색 결과의 품질을 평가하고 필터링합니다"
+                    })
                 integrated_results = await self._integrate_and_deduplicate_results(all_search_results, input_data.query)
                 
                 # 4단계: 지능형 랭킹 적용 (85%)
                 if progress_callback:
-                    progress_callback("검색 결과 품질 평가 및 랭킹 중...", 85)
+                    progress_callback("검색 결과 품질 평가 및 랭킹 중...", 85, {
+                        "step_id": "result_ranking",
+                        "step_name": "결과 순위화",
+                        "description": "관련성과 신뢰도에 따라 결과를 순위화합니다"
+                    })
                 ranked_results = await self._apply_intelligent_ranking(integrated_results, input_data.query, model)
                 
                 # 5단계: LLM 기반 통합 답변 생성 (95%)
                 if progress_callback:
-                    progress_callback("AI 분석 및 통합 답변 생성 중...", 95)
+                    progress_callback("AI 분석 및 통합 답변 생성 중...", 95, {
+                        "step_id": "response_generation",
+                        "step_name": "AI 답변 생성",
+                        "description": "검색 결과를 바탕으로 종합적인 답변을 생성합니다"
+                    })
                 enhanced_summary = await self._generate_enhanced_response(
                     original_query=input_data.query,
                     search_queries=search_queries,
@@ -223,7 +252,11 @@ class WebSearchAgent(BaseAgent):
                     "target_sites": list(set(filter(None, [q.target_url for q in search_queries]))),
                     "used_operators": list(set(filter(None, [op for q in search_queries if q.search_operators for op in q.search_operators]))),
                     "url_analysis": url_info,
-                    "top_sources": [r.get('title', '')[:50] for r in ranked_results[:3]]
+                    "top_sources": [r.get('title', '')[:50] for r in ranked_results[:3]],
+                    # 맥락 통합 검색어 정보 추가
+                    "original_query": original_query,
+                    "context_integrated_queries": conversation_context.optimal_search_queries if conversation_context else [],
+                    "has_conversation_context": bool(conversation_context and conversation_context.optimal_search_queries)
                 }
                 
                 return AgentOutput(
@@ -251,7 +284,7 @@ class WebSearchAgent(BaseAgent):
                     error=str(e)
                 )
     
-    async def _generate_multiple_search_queries(self, user_query: str, model: str, url_info: Dict[str, Any]) -> List[SearchQuery]:
+    async def _generate_multiple_search_queries(self, user_query: str, model: str, url_info: Dict[str, Any], conversation_context=None) -> List[SearchQuery]:
         """사용자 질문을 분석하여 다중 검색어 생성 (URL 정보 포함)"""
         try:
             # URL 정보를 활용한 프롬프트 생성
@@ -279,20 +312,92 @@ class WebSearchAgent(BaseAgent):
 - URL 크롤링과 병행할 보조 검색어도 생성해주세요.
 """
             
+            # 위치 기반 검색 컨텍스트 감지
+            location_context = ""
+            weather_keywords = ["날씨", "기온", "강수", "습도", "미세먼지", "weather", "temperature", "rain"]
+            location_keywords = ["오늘", "현재", "지금", "여기", "내 위치", "근처"]
+            
+            has_weather_query = any(keyword in user_query.lower() for keyword in weather_keywords)
+            has_location_query = any(keyword in user_query.lower() for keyword in location_keywords)
+            
+            if has_weather_query and has_location_query:
+                from datetime import datetime
+                today_date = datetime.now().strftime("%Y년 %m월 %d일")
+                location_context = f"""
+**위치 기반 검색 특별 지시사항**:
+- 사용자가 현재 위치나 "오늘" 관련 날씨 정보를 요청했습니다.
+- 오늘 날짜: {today_date}
+- 한국 주요 도시(서울, 부산, 대구, 인천, 광주, 대전, 울산) 기준 검색어를 포함해주세요.
+- "site:weather.go.kr" 또는 "site:kma.go.kr" 기상청 사이트 검색을 우선 포함해주세요.
+- 구체적인 날짜와 지역명을 포함한 검색어를 생성해주세요.
+- 예: "{today_date} 서울 날씨", "site:weather.go.kr 오늘 날씨"
+"""
+            
+            # 범용 대화 맥락 기반 검색 컨텍스트 생성
+            conversation_context_prompt = ""
+            logger.info(f"🎯 대화 맥락 수신 여부: {conversation_context is not None}")
+            if conversation_context:
+                logger.info(f"🎯 대화 맥락 정보 - 도메인: {conversation_context.domain}, 최적 검색어: {conversation_context.optimal_search_queries}")
+                
+                # LLM이 이미 생성한 최적 검색어가 있는지 확인
+                if conversation_context.optimal_search_queries:
+                    # LLM이 생성한 최적 검색어 우선 사용
+                    logger.info(f"🎯 LLM 최적 검색어 사용: {conversation_context.optimal_search_queries}")
+                    conversation_context_prompt = f"""
+**🎯 LLM 분석 기반 최적 검색어 활용**:
+LLM이 전체 대화 맥락을 분석하여 생성한 최적 검색어들:
+{chr(10).join([f'- {query}' for query in conversation_context.optimal_search_queries])}
+
+**대화 맥락 정보**:
+- 도메인: {conversation_context.domain}
+- 주제 진화: {' → '.join(conversation_context.topic_evolution)}
+- 사용자 의도: {conversation_context.user_intent}
+- 맥락 연결: {conversation_context.context_connection}
+- 검색 포커스: {conversation_context.search_focus}
+
+**최적화된 검색 전략**:
+1. LLM이 제안한 최적 검색어들을 기반으로 검색어 생성
+2. 전체 대화 맥락을 반영한 구체적이고 의미있는 검색어 구성
+3. 사용자의 진짜 검색 의도에 부합하는 다각도 검색어 생성
+"""
+                else:
+                    # LLM 검색어가 없으면 기존 맥락 정보 활용
+                    conversation_context_prompt = f"""
+**범용 대화 맥락 기반 검색 지시사항**:
+- 도메인 분류: {conversation_context.domain}
+- 대화 주제: {', '.join(conversation_context.conversation_topics)}
+- 주제 진화: {' → '.join(conversation_context.topic_evolution) if conversation_context.topic_evolution else '단일 주제'}
+- 핵심 엔티티: {', '.join(conversation_context.mentioned_entities)}
+- 사용자 의도: {conversation_context.user_intent}
+- 맥락 연결: {conversation_context.context_connection}
+- 검색 포커스: {conversation_context.search_focus}
+- 이전 검색어: {', '.join(conversation_context.previous_search_queries[-3:])}
+
+**범용 맥락 활용 규칙**:
+1. 도메인에 맞는 전문 용어와 키워드 활용 ({conversation_context.domain} 분야)
+2. 주제 진화 과정을 반영한 통합적 검색어 생성
+3. 사용자 의도({conversation_context.user_intent})에 맞는 검색 방향성 설정
+4. 맥락 연결성을 고려한 구체적이고 명확한 검색어 구성
+5. 중복 방지 및 새로운 관점의 정보 탐색
+"""
+
             prompt = f"""
 사용자 질문을 분석하여 웹 검색에 최적화된 다중 검색어를 생성해주세요.
 
 사용자 질문: "{user_query}"
 검색 타입: {search_type}
 {url_context}
+{location_context}
+{conversation_context_prompt}
 
 다음 규칙에 따라 3-5개의 검색어를 생성하세요:
 
 1. **핵심 검색어** (우선순위 1): 정확한 매칭을 위한 가장 중요한 검색어
-2. **보조 검색어** (우선순위 2): 관련 정보를 찾기 위한 확장 검색어
-3. **영어 검색어** (우선순위 2): 영어로 번역한 검색어 (필요시)
-4. **구체적 검색어** (우선순위 1): 더 구체적이고 세부적인 검색어
-5. **관련 검색어** (우선순위 3): 연관된 주제의 검색어
+2. **지역 특화 검색어** (우선순위 1): 위치/날씨 관련 질문인 경우 지역명 포함
+3. **보조 검색어** (우선순위 2): 관련 정보를 찾기 위한 확장 검색어
+4. **영어 검색어** (우선순위 2): 영어로 번역한 검색어 (필요시)
+5. **구체적 검색어** (우선순위 1): 더 구체적이고 세부적인 검색어
+6. **관련 검색어** (우선순위 3): 연관된 주제의 검색어
 
 각 검색어에 대해 다음 정보를 포함한 JSON 형태로 응답해주세요:
 {{
@@ -420,14 +525,16 @@ JSON 형태로만 응답해주세요.
         self, 
         search_queries: List[SearchQuery], 
         session: AsyncSession,
-        progress_callback=None
+        progress_callback=None,
+        conversation_context=None,
+        original_query: str = None
     ) -> List[EnhancedSearchResult]:
         """병렬로 다중 검색어 실행"""
         search_tasks = []
         
         # 각 검색어에 대해 비동기 태스크 생성
         for i, query in enumerate(search_queries):
-            task = self._execute_single_search(query, session, i, len(search_queries), progress_callback)
+            task = self._execute_single_search(query, session, i, len(search_queries), progress_callback, conversation_context, original_query)
             search_tasks.append(task)
         
         # 모든 검색을 병렬로 실행
@@ -450,7 +557,9 @@ JSON 형태로만 응답해주세요.
         session: AsyncSession,
         task_index: int,
         total_tasks: int,
-        progress_callback=None
+        progress_callback=None,
+        conversation_context=None,
+        original_query: str = None
     ) -> EnhancedSearchResult:
         """단일 검색어 실행 (일반 검색 + URL 크롤링 지원)"""
         # 각 검색 태스크마다 독립적인 세션 사용 (동시성 문제 해결)
@@ -462,7 +571,30 @@ JSON 형태로만 응답해주세요.
                     if search_query.search_type == "url_crawl":
                         progress_callback(f"'{search_query.target_url}' 크롤링 중...", base_progress)
                     else:
-                        progress_callback(f"'{search_query.query}' 검색 중...", base_progress)
+                        # 맥락 통합 검색어 표시
+                        display_query = search_query.query
+                        has_context = False
+                        matching_optimal = None
+                        
+                        if conversation_context and conversation_context.optimal_search_queries:
+                            # 맥락 통합 검색어가 있으면 그것을 표시
+                            matching_optimal = next((q for q in conversation_context.optimal_search_queries if q in search_query.query), None)
+                            if matching_optimal:
+                                display_query = matching_optimal
+                                has_context = True
+                        
+                        # 메타데이터 준비
+                        metadata = {
+                            'step_id': 'parallel_search',
+                            'step_name': '병렬 웹 검색',
+                            'description': f"'{display_query}' 검색을 수행중입니다",
+                            'has_context': has_context,
+                            'original_query': original_query if has_context else None,
+                            'context_integrated_query': matching_optimal if has_context else None,
+                            'current_search_query': display_query
+                        }
+                        
+                        progress_callback(f"'{display_query}' 검색 중...", base_progress, metadata)
                 
                 results_dict = []
                 

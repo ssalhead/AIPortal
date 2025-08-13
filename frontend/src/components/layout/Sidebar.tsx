@@ -51,13 +51,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return 'Invalid Date';
       }
       
+      // 한국 시간으로 변환 (UTC+9)
+      const kstDate = new Date(date.getTime() + (9 * 60 * 60 * 1000));
+      
       // yyyy-mm-dd HH:MM:SS 형식으로 포맷
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      const seconds = String(date.getSeconds()).padStart(2, '0');
+      const year = kstDate.getUTCFullYear();
+      const month = String(kstDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(kstDate.getUTCDate()).padStart(2, '0');
+      const hours = String(kstDate.getUTCHours()).padStart(2, '0');
+      const minutes = String(kstDate.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(kstDate.getUTCSeconds()).padStart(2, '0');
       
       return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     } catch (error) {
@@ -174,60 +177,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onMouseEnter={() => setHoveredChat(chat.id)}
               onMouseLeave={() => setHoveredChat(null)}
             >
-              <button
-                onClick={() => onSelectChat?.(chat.id)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-700 
-                  transition-all duration-200 text-left"
-                title={!isOpen && !isMobile ? chat.title : undefined}
-              >
-                <MessageSquare className="w-5 h-5 text-slate-500 dark:text-slate-400 flex-shrink-0" />
-                {(isOpen || isMobile) && (
-                  <div className="flex-1 min-w-0">
-                    {editingChat === chat.id ? (
-                      <input
-                        type="text"
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleEditSave(chat.id);
-                          } else if (e.key === 'Escape') {
-                            handleEditCancel();
-                          }
-                        }}
-                        onBlur={() => handleEditSave(chat.id)}
-                        className="w-full text-sm font-medium bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-blue-500 rounded px-2 py-1"
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    ) : (
-                      <p 
-                        className="truncate text-sm font-medium text-slate-700 dark:text-slate-300 cursor-text"
-                        onDoubleClick={() => handleEditStart(chat.id, chat.title)}
-                        title="더블클릭하여 제목 편집"
-                      >
-                        {chat.title}
+              <div className="relative flex items-center rounded-xl hover:bg-slate-300 dark:hover:bg-slate-700 
+                transition-all duration-200">
+                <button
+                  onClick={() => onSelectChat?.(chat.id)}
+                  className="flex-1 flex items-center gap-3 p-3 pr-2 text-left min-w-0"
+                  title={!isOpen && !isMobile ? chat.title : undefined}
+                >
+                  <MessageSquare className="w-5 h-5 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+                  {(isOpen || isMobile) && (
+                    <div className="flex-1 min-w-0 max-w-[calc(100%-3rem)]">
+                      {editingChat === chat.id ? (
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleEditSave(chat.id);
+                            } else if (e.key === 'Escape') {
+                              handleEditCancel();
+                            }
+                          }}
+                          onBlur={() => handleEditSave(chat.id)}
+                          className="w-full text-sm font-medium bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-blue-500 rounded px-2 py-1"
+                          autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <p 
+                          className="truncate text-sm font-medium text-slate-700 dark:text-slate-300 cursor-text"
+                          onDoubleClick={() => handleEditStart(chat.id, chat.title)}
+                          title={chat.title.length > 10 ? `${chat.title} (더블클릭하여 편집)` : "더블클릭하여 제목 편집"}
+                        >
+                          {chat.title}
+                        </p>
+                      )}
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                        {formatTime(chat.timestamp)}
                       </p>
-                    )}
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      {formatTime(chat.timestamp)}
-                    </p>
-                  </div>
-                )}
-                {(isOpen || isMobile) && hoveredChat === chat.id && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteChat?.(chat.id);
-                    }}
-                    className="flex-shrink-0 p-1.5 rounded-lg hover:bg-error-100 dark:hover:bg-error-900/20 
-                      text-slate-400 hover:text-error-600 dark:hover:text-error-400 transition-colors"
-                    title="대화 삭제"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-              </button>
+                    </div>
+                  )}
+                </button>
+                {/* 삭제 버튼 영역 - 항상 공간 확보하되 호버 시에만 표시 */}
+                <div className="flex-shrink-0 w-10 h-full flex items-center justify-center">
+                  {(isOpen || isMobile) && hoveredChat === chat.id && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteChat?.(chat.id);
+                      }}
+                      className="p-1.5 rounded-lg hover:bg-error-100 dark:hover:bg-error-900/20 
+                        text-slate-400 hover:text-error-600 dark:hover:text-error-400 transition-colors"
+                      title="대화 삭제"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           ))}
         </nav>

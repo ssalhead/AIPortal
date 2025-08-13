@@ -76,10 +76,11 @@ class ApiService {
     return response.data;
   }
 
-  // 실시간 진행 상태와 함께 채팅 메시지 전송 (SSE)
+  // 실시간 진행 상태와 함께 채팅 메시지 전송 (SSE) - 청크 스트리밍 지원
   async sendChatMessageWithProgress(
     message: ChatMessage,
-    onProgress: (step: string, progress: number) => void,
+    onProgress: (step: string, progress: number, metadata?: any) => void,
+    onChunk: (text: string, isFirst: boolean, isFinal: boolean) => void,
     onResult: (result: ChatResponse) => void,
     onError: (error: string) => void
   ): Promise<void> {
@@ -128,15 +129,29 @@ class ApiService {
                   break;
                   
                 case 'progress':
-                  onProgress(eventData.data.step, eventData.data.progress);
+                  onProgress(eventData.data.step, eventData.data.progress, eventData.data.metadata);
+                  break;
+                  
+                case 'metadata':
+                  // 메타데이터 수신 - 스트리밍 준비
+                  console.log('📊 메타데이터 수신:', eventData.data);
+                  break;
+                  
+                case 'chunk':
+                  // 청크 데이터 수신 - 타이핑 효과로 표시
+                  const chunkData = eventData.data;
+                  console.log('📝 청크 수신:', chunkData.text, '(인덱스:', chunkData.index, ', 마지막:', chunkData.is_final, ')');
+                  onChunk(chunkData.text, chunkData.index === 0, chunkData.is_final);
                   break;
                   
                 case 'result':
+                  console.log('🎯 스트리밍 result 이벤트:', eventData.data);
                   onResult(eventData.data);
                   break;
                   
                 case 'end':
                   console.log('채팅 완료:', eventData.data.message);
+                  // end 이벤트에서 스트리밍 완료
                   return;
                   
                 case 'error':
