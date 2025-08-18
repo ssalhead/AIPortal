@@ -104,3 +104,17 @@ class Settings(BaseSettings):
 
 # 설정 인스턴스 생성
 settings = Settings()
+
+# 초기화 직후 중요 설정값들 로깅
+import logging
+logger = logging.getLogger(__name__)
+
+# Google API 설정 상태 확인 및 로깅
+logger.info(f"=== 🔧 Google API 설정 상태 ===")
+logger.info(f"GOOGLE_API_KEY: {'설정됨' if settings.GOOGLE_API_KEY else '설정되지 않음'}")
+logger.info(f"GOOGLE_CSE_ID: {'설정됨' if settings.GOOGLE_CSE_ID else '설정되지 않음'}")
+if settings.GOOGLE_API_KEY:
+    logger.info(f"GOOGLE_API_KEY (앞 10자): {settings.GOOGLE_API_KEY[:10]}...")
+if settings.GOOGLE_CSE_ID:
+    logger.info(f"GOOGLE_CSE_ID: {settings.GOOGLE_CSE_ID}")
+logger.info(f"===============================")

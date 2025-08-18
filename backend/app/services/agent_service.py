@@ -394,6 +394,310 @@ class AgentService:
                 "model_used": model
             }
     
+    async def execute_chat_stream(
+        self, 
+        message: str, 
+        model: str = "auto",
+        agent_type: str = "auto",
+        user_id: str = "default_user",
+        session_id: str = None,
+        context: Dict[str, Any] = None,
+        progress_callback = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        스트리밍 채팅 메시지 처리 (대화 컨텍스트 지원)
+        
+        Args:
+            message: 사용자 메시지
+            model: 사용할 LLM 모델
+            agent_type: 에이전트 타입 (auto는 supervisor가 자동 선택)
+            user_id: 사용자 ID
+            session_id: 대화 세션 ID
+            context: 추가 컨텍스트
+            progress_callback: 진행 상태 콜백
+            
+        Yields:
+            스트리밍 응답 이벤트들
+        """
+        try:
+            from app.services.conversation_history_service import conversation_history_service
+            from app.db.session import AsyncSessionLocal
+            from app.db.models.conversation import MessageRole
+            from app.agents.llm_router import llm_router
+            
+            # 대화 생성 또는 기존 대화 사용 (execute_chat과 동일한 로직)
+            async with AsyncSessionLocal() as db:
+                if session_id:
+                    # 기존 대화 확인
+                    conversation_detail = await conversation_history_service.get_conversation_detail(
+                        conversation_id=session_id,
+                        user_id=user_id,
+                        session=db
+                    )
+                    if not conversation_detail:
+                        # 대화가 없으면 새로 생성
+                        conversation = await conversation_history_service.create_conversation(
+                            user_id=user_id,
+                            title=f"대화 {now_kst().strftime('%Y-%m-%d %H:%M')}",
+                            session=db,
+                            model=model,
+                            agent_type=agent_type
+                        )
+                        session_id = conversation['id']
+                else:
+                    # 새 대화 생성 - 임시 제목으로 생성
+                    conversation = await conversation_history_service.create_conversation(
+                        user_id=user_id,
+                        title=f"대화 {now_kst().strftime('%Y-%m-%d %H:%M')}",
+                        session=db,
+                        model=model,
+                        agent_type=agent_type
+                    )
+                    session_id = conversation['id']
+                
+                # 사용자 메시지를 대화 히스토리에 추가
+                await conversation_history_service.add_message(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    role=MessageRole.USER,
+                    content=message,
+                    session=db
+                )
+                
+            yield {"type": "start", "data": {"session_id": session_id, "message": "대화 컨텍스트 분석 중..."}}
+            
+            # LLM 라우터를 통한 최적 모델 선택
+            if model == "auto":
+                task_type_mapping = {
+                    "web_search": "speed",
+                    "supervisor": "reasoning",
+                    "auto": "general"
+                }
+                task_type = task_type_mapping.get(agent_type, "general")
+                selected_model = llm_router.get_optimal_model(task_type, len(message))
+            else:
+                selected_model = model
+            
+            # 대화 맥락 추출 (execute_chat과 동일한 로직)
+            conversation_context = None
+            conversation_context_text = ""
+            logger.info(f"🔍 스트리밍 대화 맥락 추출 시작 - session_id: {session_id}, message: {message[:100]}...")
+            async with AsyncSessionLocal() as db:
+                conversation_context = await universal_context_analyzer.extract_conversation_context(
+                    session_id=session_id,
+                    current_query=message,
+                    db_session=db,
+                    model=selected_model
+                )
+                logger.info(f"🔍 스트리밍 맥락 추출 완료 - domain: {conversation_context.domain if conversation_context else 'None'}")
+                
+                # 기존 호환성을 위한 텍스트 형태 컨텍스트도 생성
+                if conversation_context and conversation_context.recent_messages:
+                    context_messages = []
+                    for msg in conversation_context.recent_messages[-4:]:  # 최근 4개만 사용
+                        role = "사용자" if msg['role'] == 'user' else "어시스턴트"
+                        context_messages.append(f"{role}: {msg['content']}")
+                    if context_messages:
+                        conversation_context_text = "\n".join(context_messages)
+            
+            # 컨텍스트가 있으면 메시지에 포함 (기존 호환성)
+            enhanced_message = message
+            if conversation_context_text:
+                enhanced_message = f"대화 기록:\n{conversation_context_text}\n\n현재 질문: {message}"
+            
+            yield {"type": "context", "data": {
+                "has_context": bool(conversation_context_text),
+                "original_message": message,
+                "enhanced_message": enhanced_message if conversation_context_text else None,
+                "domain": conversation_context.domain if conversation_context else None
+            }}
+            
+            # 입력 데이터 생성 (execute_chat과 동일한 로직)
+            agent_input = AgentInput(
+                query=enhanced_message,
+                context=context or {"has_conversation_context": bool(conversation_context)},
+                user_id=user_id,
+                session_id=session_id,
+                conversation_context=conversation_context  # 새로운 맥락 정보 추가
+            )
+            
+            # 에이전트 선택 및 실행 (execute_chat과 동일한 로직 적용)
+            full_response = ""
+            chunk_count = 0
+            citations = []
+            sources = []
+            
+            if agent_type == "none":
+                # 일반 채팅 모드 - LLM 라우터 직접 호출
+                async for chunk in llm_router.stream_response(selected_model, enhanced_message):
+                    chunk_count += 1
+                    full_response += chunk
+                    
+                    # 청크 데이터 실시간 전송
+                    yield {"type": "chunk", "data": {
+                        "text": chunk,
+                        "index": chunk_count - 1,
+                        "is_final": False
+                    }}
+                    
+            elif agent_type == "auto" or agent_type == "supervisor":
+                # Supervisor가 자동으로 적절한 에이전트 선택
+                result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
+                
+                # 결과에서 citations/sources 추출
+                citations = getattr(result, 'citations', [])
+                sources = getattr(result, 'sources', [])
+                full_response = result.result
+                
+                # 응답을 청크로 스트리밍 시뮬레이션
+                import asyncio
+                words = full_response.split()
+                for i, word in enumerate(words):
+                    chunk = word + (" " if i < len(words) - 1 else "")
+                    chunk_count += 1
+                    
+                    yield {"type": "chunk", "data": {
+                        "text": chunk,
+                        "index": chunk_count - 1,
+                        "is_final": False
+                    }}
+                    await asyncio.sleep(0.03)  # 자연스러운 타이핑 효과
+                    
+            else:
+                # 특정 에이전트 직접 실행
+                agent = self.agents.get(agent_type)
+                if agent:
+                    result = await agent.execute(agent_input, selected_model, progress_callback)
+                    
+                    # 결과에서 citations/sources 추출
+                    citations = getattr(result, 'citations', [])
+                    sources = getattr(result, 'sources', [])
+                    full_response = result.result
+                    
+                    # 응답을 청크로 스트리밍 시뮬레이션
+                    import asyncio
+                    words = full_response.split()
+                    for i, word in enumerate(words):
+                        chunk = word + (" " if i < len(words) - 1 else "")
+                        chunk_count += 1
+                        
+                        yield {"type": "chunk", "data": {
+                            "text": chunk,
+                            "index": chunk_count - 1,
+                            "is_final": False
+                        }}
+                        await asyncio.sleep(0.03)  # 자연스러운 타이핑 효과
+                else:
+                    # 에이전트를 찾을 수 없으면 일반 채팅으로 fallback
+                    async for chunk in llm_router.stream_response(selected_model, enhanced_message):
+                        chunk_count += 1
+                        full_response += chunk
+                        
+                        yield {"type": "chunk", "data": {
+                            "text": chunk,
+                            "index": chunk_count - 1,
+                            "is_final": False
+                        }}
+            
+            # 마지막 청크 표시
+            if chunk_count > 0:
+                yield {"type": "chunk", "data": {
+                    "text": "",
+                    "index": chunk_count,
+                    "is_final": True
+                }}
+            
+            # AI 응답을 대화 히스토리에 추가 (citations/sources 메타데이터 포함)
+            response_metadata = {"streaming": True, "chunk_count": chunk_count}
+            
+            # 에이전트 결과에서 citations와 sources 정보 추가
+            if citations:
+                response_metadata['citations'] = citations
+            if sources:
+                response_metadata['sources'] = sources
+                
+            async with AsyncSessionLocal() as db:
+                await conversation_history_service.add_message(
+                    conversation_id=session_id,
+                    user_id=user_id,
+                    role=MessageRole.ASSISTANT,
+                    content=full_response,
+                    session=db,
+                    model=selected_model,
+                    metadata_=response_metadata
+                )
+            
+            # 새 대화인 경우 제목 자동 생성 (첫 번째 메시지인지 확인)
+            is_new_conversation = False
+            try:
+                async with AsyncSessionLocal() as db:
+                    # 대화의 메시지 개수 확인 (사용자 메시지 + AI 응답 = 2개면 새 대화)
+                    conversation_detail = await conversation_history_service.get_conversation_detail(
+                        conversation_id=session_id,
+                        user_id=user_id,
+                        session=db
+                    )
+                    if conversation_detail and len(conversation_detail.get('messages', [])) == 2:
+                        is_new_conversation = True
+                        
+                        # 제목 자동 생성
+                        await self._generate_conversation_title(
+                            session_id=session_id,
+                            user_message=message,
+                            model=model,
+                            user_id=user_id
+                        )
+            except Exception as e:
+                logger.error(f"제목 생성 실패: {e}")
+                # 제목 생성 실패해도 채팅은 계속 진행
+                pass
+            
+            # 메타데이터 전송
+            citation_stats = None
+            if citations:
+                citation_stats = {
+                    "total_citations": len(citations),
+                    "unique_sources": len(set(c.get('source', '') for c in citations if c.get('source')))
+                }
+            
+            yield {"type": "metadata", "data": {
+                "agent_used": agent_type or "general",
+                "model_used": selected_model,
+                "timestamp": now_kst().isoformat(),
+                "user_id": user_id,
+                "session_id": session_id,
+                "citations": citations,
+                "sources": sources,
+                "citation_stats": citation_stats,
+                "metadata": response_metadata,
+                "context_applied": bool(conversation_context_text)
+            }}
+            
+            # 최종 완료 결과 전송
+            yield {"type": "result", "data": {
+                "response": full_response,
+                "agent_used": agent_type or "general",
+                "model_used": selected_model,
+                "timestamp": now_kst().isoformat(),
+                "user_id": user_id,
+                "session_id": session_id,
+                "citations": citations,
+                "sources": sources,
+                "citation_stats": citation_stats,
+                "metadata": response_metadata
+            }}
+            
+            yield {"type": "end", "data": {"message": "대화 처리가 완료되었습니다."}}
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"스트리밍 채팅 처리 중 오류: {e}")
+            logger.error(f"스택 트레이스: {traceback.format_exc()}")
+            yield {"type": "error", "data": {
+                "message": f"채팅 처리 중 오류가 발생했습니다: {str(e)}",
+                "error": str(e)
+            }}
+    
     async def stream_response(
         self,
         query: str,
@@ -403,7 +707,7 @@ class AgentService:
         user_id: str = "default_user"
     ) -> AsyncGenerator[str, None]:
         """
-        스트리밍 응답 생성
+        스트리밍 응답 생성 (컨텍스트 없는 간단한 버전)
         
         Args:
             query: 사용자 쿼리
@@ -502,12 +806,13 @@ class AgentService:
 
 제목만 응답하고 다른 설명은 하지 마세요."""
 
-            # LLM을 통해 제목 생성
+            # LLM을 통해 제목 생성 (날짜 컨텍스트 제외)
             response_content, used_model = await llm_router.generate_response(
                 model_name=model,
                 prompt=title_prompt,
                 user_id=user_id,
-                conversation_id=None
+                conversation_id=None,
+                include_datetime=False  # 제목 생성시에는 날짜 정보 불필요
             )
             
             # 생성된 제목 정리

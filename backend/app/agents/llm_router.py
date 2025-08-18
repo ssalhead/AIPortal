@@ -245,6 +245,26 @@ class LLMRouter:
             getattr(settings, 'MOCK_LLM_ENABLED', False)
         )
 
+    def _add_datetime_context(self, prompt: str) -> str:
+        """프롬프트에 현재 날짜/시간 정보 추가"""
+        from app.utils.timezone import now_kst
+        
+        current_datetime = now_kst()
+        date_context = f"""
+[현재 시간 정보]
+- 현재 날짜/시간: {current_datetime.strftime('%Y년 %m월 %d일 (%A) %H시 %M분')} (한국 시간, KST)
+- 오늘: {current_datetime.strftime('%Y-%m-%d')}
+- 현재 연도: {current_datetime.year}년
+- 현재 월: {current_datetime.month}월
+- 현재 요일: {current_datetime.strftime('%A')} (한국어: {['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'][current_datetime.weekday()]})
+
+위 시간 정보를 참고하여 "오늘", "현재", "최근" 등의 시간 표현이 포함된 질문에 정확하게 답변해주세요.
+
+사용자 질문:
+{prompt}"""
+        
+        return date_context
+
     @log_llm_usage
     async def generate_response(
         self, 
@@ -252,6 +272,7 @@ class LLMRouter:
         prompt: str, 
         user_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        include_datetime: bool = True,
         **kwargs
     ) -> tuple[str, str]:
         """
@@ -262,16 +283,20 @@ class LLMRouter:
             prompt: 프롬프트
             user_id: 사용자 ID (로깅용)
             conversation_id: 대화 ID (로깅용)
+            include_datetime: 날짜/시간 컨텍스트 포함 여부 (기본값: True)
             **kwargs: 추가 파라미터
             
         Returns:
             (응답 텍스트, 실제 사용된 모델 이름)
         """
+        # 날짜/시간 컨텍스트 추가 (제목 생성 등 특별한 경우 제외)
+        final_prompt = self._add_datetime_context(prompt) if include_datetime else prompt
+        
         # Mock 모드 확인
         if self.is_mock_mode():
             logger.info(f"Mock 모드로 응답 생성 - 요청된 모델: {model_name}")
             mock_model_name = f"mock-{model_name.lower()}"
-            response = mock_llm.generate_response(prompt, mock_model_name)
+            response = mock_llm.generate_response(final_prompt, mock_model_name)
             return response, mock_model_name
         
         model = self.get_model(model_name)
@@ -280,7 +305,7 @@ class LLMRouter:
         
         try:
             # 실제 모델 호출
-            response = await model.ainvoke(prompt)
+            response = await model.ainvoke(final_prompt)
             return response.content, model_name
             
         except Exception as e:
@@ -290,7 +315,7 @@ class LLMRouter:
             logger.warning(f"실제 API 호출 실패, Mock 응답으로 대체: {e}")
             mock_model_name = f"mock-{model_name.lower()}-fallback"
             response = mock_llm.generate_response(
-                prompt, 
+                final_prompt, 
                 f"{mock_model_name} (API 오류로 인한 Mock 응답)"
             )
             return response, mock_model_name
@@ -433,6 +458,7 @@ class LLMRouter:
         self,
         model_name: str,
         prompt: str,
+        include_datetime: bool = True,
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """
@@ -441,37 +467,41 @@ class LLMRouter:
         Args:
             model_name: 사용할 모델 이름
             prompt: 프롬프트
+            include_datetime: 날짜/시간 컨텍스트 포함 여부 (기본값: True)
             **kwargs: 추가 파라미터
             
         Yields:
             응답 텍스트 청크
         """
+        # 날짜/시간 컨텍스트 추가
+        final_prompt = self._add_datetime_context(prompt) if include_datetime else prompt
+        
         # Mock 모드 확인
         if self.is_mock_mode():
             logger.info(f"Mock 스트리밍 응답 생성 - 요청된 모델: {model_name}")
             mock_model_name = f"mock-{model_name.lower()}"
-            async for chunk in mock_llm.stream_response(prompt, mock_model_name):
+            async for chunk in mock_llm.stream_response(final_prompt, mock_model_name):
                 yield chunk
             return
         
         model = self.get_model(model_name)
         if model is None:
             # Mock으로 fallback
-            async for chunk in mock_llm.stream_response(prompt, f"mock-{model_name}-unavailable"):
+            async for chunk in mock_llm.stream_response(final_prompt, f"mock-{model_name}-unavailable"):
                 yield chunk
             return
         
         try:
             # 실제 스트리밍 (LangChain 모델이 스트리밍을 지원하는 경우)
             if hasattr(model, 'astream'):
-                async for chunk in model.astream(prompt):
+                async for chunk in model.astream(final_prompt):
                     if hasattr(chunk, 'content'):
                         yield chunk.content
                     else:
                         yield str(chunk)
             else:
                 # 스트리밍을 지원하지 않는 경우 일반 응답을 청크로 나누어 전송
-                response = await model.ainvoke(prompt)
+                response = await model.ainvoke(final_prompt)
                 content = response.content
                 
                 # 단어별로 스트리밍 시뮬레이션
@@ -486,7 +516,7 @@ class LLMRouter:
             logger.error(f"스트리밍 응답 생성 중 오류: {e}")
             # Mock 스트리밍으로 fallback
             async for chunk in mock_llm.stream_response(
-                prompt, 
+                final_prompt, 
                 f"mock-{model_name}-error-fallback"
             ):
                 yield chunk

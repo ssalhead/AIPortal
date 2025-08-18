@@ -85,88 +85,6 @@ class SearchService:
         hash_key = hashlib.sha256(key_string.encode()).hexdigest()[:16]
         return f"search:{hash_key}"
     
-    async def search_web_mock(
-        self,
-        query: str,
-        max_results: int = 5,
-        **kwargs
-    ) -> List[SearchResult]:
-        """Mock 웹 검색 (API 키 없이 테스트용)"""
-        
-        # 다양한 쿼리별 Mock 결과
-        mock_results = {
-            "ai": [
-                SearchResult(
-                    title="인공지능(AI) 기술 동향 2024",
-                    url="https://example.com/ai-trends-2024",
-                    snippet="2024년 인공지능 기술의 주요 동향과 발전 방향을 살펴봅니다. 생성형 AI, 멀티모달 AI, 그리고 AI의 실용적 활용 사례들을 소개합니다.",
-                    source="tech_blog",
-                    score=0.95
-                ),
-                SearchResult(
-                    title="ChatGPT와 Claude AI 성능 비교",
-                    url="https://example.com/llm-comparison",
-                    snippet="주요 대형 언어 모델들의 성능을 다양한 측면에서 비교 분석한 결과를 공개합니다. 각 모델의 장단점과 적용 분야별 추천을 확인해보세요.",
-                    source="research_paper",
-                    score=0.92
-                )
-            ],
-            "python": [
-                SearchResult(
-                    title="Python 3.12 새로운 기능 완벽 가이드",
-                    url="https://example.com/python-3-12-features",
-                    snippet="Python 3.12에서 새롭게 추가된 기능들을 상세히 설명합니다. 성능 개선사항, 새로운 문법, 그리고 개발자들이 알아야 할 변경점들을 다룹니다.",
-                    source="official_docs",
-                    score=0.98
-                ),
-                SearchResult(
-                    title="FastAPI vs Django 2024년 성능 비교",
-                    url="https://example.com/fastapi-django-comparison",
-                    snippet="최신 Python 웹 프레임워크인 FastAPI와 전통적인 Django의 성능을 실제 프로젝트를 통해 비교 분석했습니다.",
-                    source="dev_community",
-                    score=0.87
-                )
-            ],
-            "웹개발": [
-                SearchResult(
-                    title="2024 웹 개발 트렌드와 전망",
-                    url="https://example.com/web-dev-trends-2024",
-                    snippet="2024년 웹 개발 분야의 주요 트렌드를 분석합니다. React 18, Next.js 14, 그리고 새로운 웹 기술들의 발전 방향을 살펴봅니다.",
-                    source="tech_magazine",
-                    score=0.91
-                )
-            ]
-        }
-        
-        # 키워드 매칭을 통한 결과 반환
-        results = []
-        query_lower = query.lower()
-        
-        for keyword, search_results in mock_results.items():
-            if keyword in query_lower or any(k in query_lower for k in keyword.split()):
-                results.extend(search_results)
-        
-        # 기본 결과가 없으면 일반적인 Mock 결과 생성
-        if not results:
-            results = [
-                SearchResult(
-                    title=f"'{query}' 관련 최신 정보",
-                    url=f"https://example.com/search?q={quote_plus(query)}",
-                    snippet=f"'{query}'에 대한 상세한 정보와 분석을 제공합니다. 최신 동향과 실용적인 활용 방법을 확인해보세요.",
-                    source="search_engine",
-                    score=0.85
-                ),
-                SearchResult(
-                    title=f"{query} - 종합 가이드",
-                    url=f"https://example.com/guide/{quote_plus(query)}",
-                    snippet=f"{query}에 대한 포괄적인 가이드입니다. 기초부터 고급 활용법까지 단계별로 설명합니다.",
-                    source="documentation",
-                    score=0.78
-                )
-            ]
-        
-        # max_results 제한 적용
-        return results[:max_results]
     
     async def search_duckduckgo(
         self,
@@ -267,8 +185,12 @@ class SearchService:
     ) -> List[SearchResult]:
         """Google Custom Search API를 사용한 웹 검색"""
         
+        print(f"🔍 Google 검색 시도: '{query}'")
+        print(f"🔑 API 키 상태: GOOGLE_API_KEY={'있음' if settings.GOOGLE_API_KEY else '없음'}")
+        print(f"🔑 CSE ID 상태: GOOGLE_CSE_ID={'있음' if settings.GOOGLE_CSE_ID else '없음'}")
+        
         if not settings.GOOGLE_API_KEY or not settings.GOOGLE_CSE_ID:
-            print("Google API 키 또는 CSE ID가 설정되지 않음")
+            print("❌ Google API 키 또는 CSE ID가 설정되지 않음")
             return []
         
         try:
@@ -384,36 +306,27 @@ class SearchService:
         results = []
         
         try:
-            # 1. DuckDuckGo를 메인 검색 엔진으로 사용 (안정적이고 무료)
-            duckduckgo_results = await self.search_duckduckgo(query, max_results, **kwargs)
-            results.extend(duckduckgo_results)
-            print(f"DuckDuckGo 검색 결과: {len(duckduckgo_results)}개")
+            # 1. Google Custom Search를 메인 검색 엔진으로 사용 (높은 품질)
+            if settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID:
+                try:
+                    google_results = await self.search_google(query, max_results, **kwargs)
+                    results.extend(google_results)
+                    print(f"Google 검색 결과: {len(google_results)}개")
+                except Exception as google_error:
+                    print(f"Google 검색 실패: {google_error}")
             
-            # 2. Google Custom Search로 추가 결과 보완 (설정된 경우에만)
-            if len(results) < max_results and settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID:
+            # 2. DuckDuckGo로 추가 결과 보완 (Google 결과가 부족한 경우만)
+            if len(results) < max_results:
                 remaining = max_results - len(results)
                 try:
-                    google_results = await self.search_google(query, remaining, **kwargs)
-                    results.extend(google_results)
-                    print(f"Google 검색 추가 결과: {len(google_results)}개")
-                except Exception as google_error:
-                    print(f"Google 검색 실패 (무시하고 계속): {google_error}")
+                    duckduckgo_results = await self.search_duckduckgo(query, remaining, **kwargs)
+                    results.extend(duckduckgo_results)
+                    print(f"DuckDuckGo 보완 검색 결과: {len(duckduckgo_results)}개")
+                except Exception as duckduckgo_error:
+                    print(f"DuckDuckGo 검색 실패: {duckduckgo_error}")
             
         except Exception as e:
-            print(f"실제 검색 오류: {e}")
-            # Google과 DuckDuckGo 모두 실패하면 Mock 검색 시도
-            try:
-                mock_results = await self.search_web_mock(query, max_results, **kwargs)
-                results.extend(mock_results)
-                print(f"Mock 검색 결과로 대체: {len(mock_results)}개")
-            except Exception as mock_error:
-                print(f"Mock 검색도 실패: {mock_error}")
-        
-        # 2. 모든 실제 검색이 실패했을 때만 Mock 결과 사용
-        if not results:
-            print("모든 실제 검색 실패 - Mock 검색 결과 사용")
-            mock_results = await self.search_web_mock(query, max_results, **kwargs)
-            results.extend(mock_results)
+            print(f"웹 검색 전체 오류: {e}")
         
         # 3. 결과가 있으면 캐시에 저장
         if results and use_cache and session:
