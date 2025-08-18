@@ -9,7 +9,6 @@ import { ChatInput } from '../components/chat/ChatInput';
 import { Sidebar } from '../components/layout/Sidebar';
 import { WelcomeScreen } from '../components/ui/WelcomeScreen';
 import { ToastContainer, useToast } from '../components/ui/Toast';
-import { TypingIndicator } from '../components/ui/TypingIndicator';
 import { AgentSuggestionModal } from '../components/ui/AgentSuggestionModal';
 import { Resizer } from '../components/ui/Resizer';
 import { useLoading } from '../contexts/LoadingContext';
@@ -18,10 +17,10 @@ import { useSidebarWidth } from '../hooks/useSidebarWidth';
 import { apiService } from '../services/api';
 import { conversationHistoryService } from '../services/conversationHistoryService';
 import { agentSuggestionService } from '../services/agentSuggestionService';
-import { Star, Zap, Menu, X } from 'lucide-react';
-import type { LLMModel, AgentType, ConversationHistory, Citation, Source, LLMProvider } from '../types';
+import { Star, Zap } from 'lucide-react';
+import type { LLMModel, AgentType, Citation, Source, LLMProvider, ChatResponse } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
-import { SIDEBAR_WIDTHS, CANVAS_SPLIT } from '../constants/layout';
+import { CANVAS_SPLIT } from '../constants/layout';
 import type { SearchResult } from '../components/search/SearchResultsCard';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
@@ -53,18 +52,12 @@ export const ChatPage: React.FC = () => {
   const [selectedAgent, setSelectedAgent] = useState<AgentType>('none');
   
   // 반응형 hooks
-  const { isMobile, isTablet, isDesktop } = useResponsive();
-  const isTouchDevice = useTouchDevice();
-  const { getSidebarWidth, getMainContentMargin, getContainerWidth } = useSidebarWidth();
+  const { isMobile } = useResponsive();
+  const { getMainContentMargin, getContainerWidth } = useSidebarWidth();
   
   // 반응형 사이드바 상태
   const [isSidebarOpen, setIsSidebarOpen] = useState(!isMobile); // 모바일에서는 기본적으로 닫힘
-  const [chatWidth, setChatWidth] = useState(CANVAS_SPLIT.DEFAULT_CHAT_WIDTH); // 채팅 영역 비율 (%) - 7:3 비율
-  const [searchProgress, setSearchProgress] = useState<{
-    isSearching: boolean;
-    currentStep: string;
-    progress: number;
-  } | null>(null);
+  const [chatWidth, setChatWidth] = useState<number>(CANVAS_SPLIT.DEFAULT_CHAT_WIDTH); // 채팅 영역 비율 (%) - 7:3 비율
   const [currentProgressMessage, setCurrentProgressMessage] = useState<string>('');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   
@@ -86,6 +79,7 @@ export const ChatPage: React.FC = () => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const queryClient = useQueryClient();
+  const { clearCanvas } = useCanvasStore();
 
   // 대화 기록 로딩
   const { data: chatHistoryData, refetch: refetchHistory } = useQuery({
@@ -207,8 +201,10 @@ export const ChatPage: React.FC = () => {
       // 모델과 에이전트 타입도 동기화
       if (conversation.model) {
         const modelKey = conversation.model as LLMModel;
-        if (MODEL_MAP[modelKey]) {
-          const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+        const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+        const providerModels = MODEL_MAP[provider as LLMProvider];
+        const modelExists = providerModels?.some(m => m.id === modelKey);
+        if (modelExists) {
           setSelectedProvider(provider as LLMProvider);
           setSelectedModel(modelKey);
         }
@@ -236,8 +232,7 @@ export const ChatPage: React.FC = () => {
       
       // 타이핑 상태 종료
       stopTyping();
-      setSearchProgress(null);
-      setSearchSteps([]);
+;
       
       // 세션 ID 업데이트 (새 세션인 경우)
       if (response.session_id && response.session_id !== currentSessionId) {
@@ -300,8 +295,7 @@ export const ChatPage: React.FC = () => {
     onError: (error: any) => {
       // 타이핑 상태 종료
       stopTyping();
-      setSearchProgress(null);
-      setSearchSteps([]);
+;
       
       console.error('메시지 전송 실패:', error);
       console.error('에러 상세:', {
@@ -498,6 +492,23 @@ export const ChatPage: React.FC = () => {
                 setCurrentProgressMessage(progressMessage);
                 console.log('📝 진행 메시지 업데이트:', progressMessage);
               },
+              // 청크 콜백 - 실시간 스트리밍 텍스트 표시
+              (text: string, isFirst: boolean, isFinal: boolean) => {
+                console.log('📝 청크 수신:', text, '(첫 번째:', isFirst, ', 마지막:', isFinal, ')');
+                
+                if (isFirst) {
+                  // 첫 번째 청크에서 스트리밍 모드 시작
+                  setIsStreamingResponse(true);
+                  setCurrentProgressMessage(''); // 진행 메시지 숨김
+                  setStreamingMessage(text);
+                } else if (!isFinal) {
+                  // 중간 청크들은 누적하여 표시
+                  setStreamingMessage(prev => prev + text);
+                } else {
+                  // 마지막 청크 - 스트리밍 완료 준비
+                  setStreamingMessage(prev => prev + text);
+                }
+              },
               // 최종 결과 콜백
               (result: ChatResponse) => {
                 console.log('✅ 최종 결과 수신:', result);
@@ -540,11 +551,9 @@ export const ChatPage: React.FC = () => {
         const response = finalResponse;
 
         // 검색 진행 상태 및 타이핑 인디케이터 종료
-        setSearchProgress(null);
         setCurrentProgressMessage('');
-        setIsStreamingResponse(false);
-        setStreamingMessage('');
         stopTyping();
+        // 스트리밍 상태는 메시지 추가 후에 정리
         
         // 세션 ID 업데이트 (새 세션인 경우)
         const isNewSession = response.session_id && response.session_id !== currentSessionId;
@@ -630,12 +639,15 @@ export const ChatPage: React.FC = () => {
           return newMessages;
         });
         
+        // 최종 메시지 추가 후 스트리밍 상태 정리
+        setIsStreamingResponse(false);
+        setStreamingMessage('');
+        
         console.log('🔍 웹검색 - AI 응답 추가 완료');
         // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
         
       } catch (error: any) {
-        // 검색 진행 상태 및 타이핑 인디케이터 종료
-        setSearchProgress(null);
+        // 진행 상태 및 타이핑 인디케이터 종료
         setCurrentProgressMessage('');
         stopTyping();
         
@@ -649,6 +661,10 @@ export const ChatPage: React.FC = () => {
           model: 'system',
         };
         setMessages(prev => [...prev, errorMessage]);
+        
+        // 에러 시에도 스트리밍 상태 정리
+        setIsStreamingResponse(false);
+        setStreamingMessage('');
         
         const errorMsg = error?.response?.data?.message || '메시지 전송 중 오류가 발생했습니다.';
         showError(errorMsg);
@@ -799,8 +815,10 @@ export const ChatPage: React.FC = () => {
                 if (conversation.model) {
                   // 모델 문자열에서 provider와 model 파싱
                   const modelKey = conversation.model as LLMModel;
-                  if (MODEL_MAP[modelKey]) {
-                    const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+                  const provider = modelKey.startsWith('claude') ? 'claude' : 'gemini';
+                  const providerModels = MODEL_MAP[provider as LLMProvider];
+                  const modelExists = providerModels?.some(m => m.id === modelKey);
+                  if (modelExists) {
                     setSelectedProvider(provider as LLMProvider);
                     setSelectedModel(modelKey);
                   }
@@ -910,7 +928,7 @@ export const ChatPage: React.FC = () => {
                     <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
                   ) : (
                     <div className="px-6 py-6 space-y-6 max-w-4xl mx-auto">
-                      {messages.map((msg, index) => (
+                      {messages.map((msg) => (
                         <ChatMessage
                           key={msg.id}
                           message={msg.content}
@@ -919,7 +937,7 @@ export const ChatPage: React.FC = () => {
                           agentType={msg.agentType}
                           model={msg.model}
                           messageId={msg.id}
-                          conversationId={currentSessionId}
+                          conversationId={currentSessionId || undefined}
                           citations={msg.citations}
                           sources={msg.sources}
                           searchResults={msg.searchResults}
@@ -1043,7 +1061,7 @@ export const ChatPage: React.FC = () => {
                   <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
                 ) : (
                   <div className="px-6 py-6 space-y-6 max-w-4xl mx-auto">
-                    {messages.map((msg, index) => (
+                    {messages.map((msg) => (
                       <ChatMessage
                         key={msg.id}
                         message={msg.content}
@@ -1052,7 +1070,7 @@ export const ChatPage: React.FC = () => {
                         agentType={msg.agentType}
                         model={msg.model}
                         messageId={msg.id}
-                        conversationId={currentSessionId}
+                        conversationId={currentSessionId || undefined}
                         citations={msg.citations}
                         sources={msg.sources}
                         searchResults={msg.searchResults}

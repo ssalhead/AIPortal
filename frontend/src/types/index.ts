@@ -33,6 +33,7 @@ export interface ChatResponse {
   model_used: string;
   timestamp: string;
   user_id: string;
+  session_id?: string;
   citations?: Citation[];
   sources?: Source[];
   citation_stats?: CitationStats;

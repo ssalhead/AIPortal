@@ -128,6 +128,16 @@ class ApiService {
                   console.log('채팅 시작:', eventData.data.message);
                   break;
                   
+                case 'context':
+                  // 대화 컨텍스트 정보 수신
+                  console.log('🧠 컨텍스트 분석 완료:', eventData.data);
+                  if (eventData.data.has_context) {
+                    console.log('✅ 이전 대화 맥락 적용됨');
+                  } else {
+                    console.log('ℹ️ 새로운 대화 시작');
+                  }
+                  break;
+                  
                 case 'progress':
                   onProgress(eventData.data.step, eventData.data.progress, eventData.data.metadata);
                   break;
@@ -135,6 +145,9 @@ class ApiService {
                 case 'metadata':
                   // 메타데이터 수신 - 스트리밍 준비
                   console.log('📊 메타데이터 수신:', eventData.data);
+                  if (eventData.data.context_applied) {
+                    console.log('✅ 대화 컨텍스트가 적용되었습니다');
+                  }
                   break;
                   
                 case 'chunk':

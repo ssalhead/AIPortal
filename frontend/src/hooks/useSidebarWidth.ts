@@ -17,7 +17,7 @@ export const useSidebarWidth = () => {
   }, [getSidebarWidth]);
 
   const getContainerWidth = useCallback((
-    containerRef: React.RefObject<HTMLDivElement>, 
+    containerRef: React.RefObject<HTMLDivElement | null>, 
     isOpen: boolean, 
     isMobile: boolean
   ) => {
