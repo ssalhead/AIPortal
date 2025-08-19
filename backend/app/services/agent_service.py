@@ -147,36 +147,8 @@ class AgentService:
                 conversation_context=conversation_context  # 새로운 맥락 정보 추가
             )
             
-            # 에이전트 선택 및 실행
-            if agent_type == "none":
-                # 일반 채팅 모드 - 컨텍스트 포함 LLM 호출
-                from app.agents.llm_router import llm_router
-                
-                # 컨텍스트 포함 응답 생성
-                cited_response = await llm_router.generate_response_with_context(
-                    message=message,
-                    model=selected_model,
-                    agent_type=agent_type,
-                    user_id=user_id,
-                    session_id=session_id,
-                    stream=False
-                )
-                
-                # CitedResponse를 AgentOutput 형태로 변환
-                class SimpleAgentOutput:
-                    def __init__(self, response_text: str, model: str):
-                        self.result = response_text
-                        self.model_used = model
-                        self.timestamp = now_kst().isoformat()
-                        self.agent_id = "general_chat"
-                        self.metadata = {}
-                        self.execution_time_ms = 0
-                        self.citations = []
-                        self.sources = []
-                
-                result = SimpleAgentOutput(cited_response.response_text, selected_model)
-                
-            elif agent_type == "auto" or agent_type == "supervisor":
+            # 에이전트 선택 및 실행 - 모든 요청은 Supervisor를 통해 자동 정보 분석
+            if agent_type == "none" or agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
                 result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
             else:
@@ -527,20 +499,7 @@ class AgentService:
             citations = []
             sources = []
             
-            if agent_type == "none":
-                # 일반 채팅 모드 - LLM 라우터 직접 호출
-                async for chunk in llm_router.stream_response(selected_model, enhanced_message):
-                    chunk_count += 1
-                    full_response += chunk
-                    
-                    # 청크 데이터 실시간 전송
-                    yield {"type": "chunk", "data": {
-                        "text": chunk,
-                        "index": chunk_count - 1,
-                        "is_final": False
-                    }}
-                    
-            elif agent_type == "auto" or agent_type == "supervisor":
+            if agent_type == "none" or agent_type == "auto" or agent_type == "supervisor":
                 # Supervisor가 자동으로 적절한 에이전트 선택
                 result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
                 
@@ -660,8 +619,33 @@ class AgentService:
                     "unique_sources": len(set(c.get('source', '') for c in citations if c.get('source')))
                 }
             
+            # 실제 사용된 에이전트 결정
+            actual_agent_used = agent_type  # 요청된 에이전트 타입을 기본값으로 사용
+            
+            if agent_type == "none" or agent_type == "auto" or agent_type == "supervisor":
+                # Supervisor가 실행되어 result 객체가 있는 경우
+                if 'result' in locals() and hasattr(result, 'metadata'):
+                    delegated_to = result.metadata.get('delegated_to')
+                    supervisor_decision = result.metadata.get('supervisor_decision')
+                    
+                    if delegated_to:
+                        # supervisor가 다른 에이전트에게 위임한 경우
+                        actual_agent_used = delegated_to
+                    elif supervisor_decision == 'information_request':
+                        actual_agent_used = "information_analysis"
+                    elif supervisor_decision in ['web_search', 'deep_research', 'canvas']:
+                        # supervisor가 작업 유형을 결정한 경우
+                        actual_agent_used = supervisor_decision
+                    else:
+                        actual_agent_used = "supervisor"
+                else:
+                    actual_agent_used = "supervisor"
+            elif agent_type == "web_search":
+                # 웹검색 모드는 명시적으로 web_search로 설정
+                actual_agent_used = "web_search"
+            
             yield {"type": "metadata", "data": {
-                "agent_used": agent_type or "general",
+                "agent_used": actual_agent_used,
                 "model_used": selected_model,
                 "timestamp": now_kst().isoformat(),
                 "user_id": user_id,
@@ -676,7 +660,7 @@ class AgentService:
             # 최종 완료 결과 전송
             yield {"type": "result", "data": {
                 "response": full_response,
-                "agent_used": agent_type or "general",
+                "agent_used": actual_agent_used,
                 "model_used": selected_model,
                 "timestamp": now_kst().isoformat(),
                 "user_id": user_id,
