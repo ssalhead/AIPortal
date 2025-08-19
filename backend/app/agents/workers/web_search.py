@@ -651,11 +651,36 @@ JSON 형태로만 응답해주세요.
                         self.logger.warning(f"URL 크롤링 실패: {crawl_result.error}")
                 
                 # 일반 웹 검색도 함께 실행 (보완적 정보 제공)
+                # SearchQuery의 search_type을 SearchService의 SearchType으로 매핑
+                from app.services.search_service import SearchType
+                
+                service_search_type = SearchType.WEB  # 기본값
+                if search_query.search_type == "general":
+                    service_search_type = SearchType.WEB
+                elif search_query.search_type == "site_specific":
+                    service_search_type = SearchType.WEB  # 사이트별 검색도 일반 웹 검색으로 처리
+                elif search_query.search_type == "url_crawl":
+                    service_search_type = SearchType.WEB
+                
+                # 검색어에서 도메인이나 의도를 분석하여 더 정확한 SearchType 설정
+                query_lower = search_query.query.lower()
+                if any(word in query_lower for word in ["뉴스", "news", "최신 소식", "최근 소식"]):
+                    service_search_type = SearchType.NEWS
+                elif any(word in query_lower for word in ["논문", "연구", "학술", "academic", "scholar"]):
+                    service_search_type = SearchType.ACADEMIC
+                elif any(word in query_lower for word in ["github", "stackoverflow", "개발", "프로그래밍", "코딩"]):
+                    service_search_type = SearchType.TECHNICAL
+                elif any(word in query_lower for word in ["정부", "공식", "gov.kr", "go.kr", "government"]):
+                    service_search_type = SearchType.GOVERNMENT
+                elif any(word in query_lower for word in ["쇼핑", "구매", "가격", "shopping", "buy"]):
+                    service_search_type = SearchType.SHOPPING
+                
                 search_results = await search_service.search_web(
                     query=search_query.query,
                     max_results=search_query.max_results,
                     use_cache=True,
-                    session=independent_session
+                    session=independent_session,
+                    search_type=service_search_type
                 )
                 
                 # 일반 검색 결과 추가
