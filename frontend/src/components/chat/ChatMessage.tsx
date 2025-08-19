@@ -10,6 +10,7 @@ import { SearchResultsCard } from '../search/SearchResultsCard';
 import { SearchProgressIndicator, type SearchStep } from '../SearchProcess/SearchProgressIndicator';
 import type { SearchResult } from '../search/SearchResultsCard';
 import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from 'lucide-react';
+import { SimpleMarkdown } from '../ui/SimpleMarkdown';
 import type { Citation as CitationData, Source as SourceData } from '../../types';
 import { feedbackService } from '../../services/feedbackService';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -238,6 +239,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   // 인용이 포함된 메시지 텍스트 렌더링
   const renderMessageWithCitations = () => {
     if (!citations.length || citationMode === 'none') {
+      // AI 응답은 마크다운 렌더링, 사용자 메시지는 일반 텍스트
+      if (!isUser) {
+        return <SimpleMarkdown text={message} className="text-sm leading-relaxed" />;
+      }
       return <div className="text-sm leading-relaxed whitespace-pre-wrap">{message}</div>;
     }
 
