@@ -2,7 +2,7 @@
  * 채팅 입력 컴포넌트 - Gemini 스타일
  */
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import type { LLMModel, AgentType, LLMProvider } from '../../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
 import { useLoading } from '../../contexts/LoadingContext';
@@ -36,10 +36,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const { isTyping } = useLoading();
   const { isMobile } = useResponsive();
   const [message, setMessage] = useState('');
-  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const dropdownButtonRef = useRef<HTMLButtonElement>(null);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // 모바일용 플레이스홀더
@@ -50,6 +50,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return MODEL_MAP[selectedProvider] || [];
   }, [selectedProvider]);
 
+  // 전체 모델 목록 (Claude + Gemini 통합)
+  const allModels = useMemo(() => {
+    return [...MODEL_MAP.claude, ...MODEL_MAP.gemini];
+  }, []);
+
+  // 현재 선택된 모델 정보
+  const currentModel = useMemo(() => {
+    return allModels.find(model => model.id === selectedModel);
+  }, [allModels, selectedModel]);
+
   // 제공업체 변경 시 첫 번째 모델로 자동 설정
   const handleProviderChange = (provider: LLMProvider) => {
     onProviderChange(provider);
@@ -58,6 +68,41 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       onModelChange(firstModel.id);
     }
   };
+
+  // 모델 변경 시 자동으로 Provider도 변경
+  const handleModelChange = (modelId: LLMModel) => {
+    const model = allModels.find(m => m.id === modelId);
+    if (model && model.provider !== selectedProvider) {
+      onProviderChange(model.provider);
+    }
+    onModelChange(modelId);
+    setShowModelDropdown(false);
+  };
+
+  // 에이전트 토글 핸들러 (단일 선택, 같은 것 클릭시 해제)
+  const handleAgentToggle = (agentType: AgentType) => {
+    if (selectedAgent === agentType) {
+      onAgentChange('none'); // 같은 버튼 클릭시 해제
+    } else {
+      onAgentChange(agentType); // 다른 버튼 클릭시 변경
+    }
+  };
+
+  // 외부 클릭시 드롭다운 닫기
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target as Node)) {
+        setShowModelDropdown(false);
+      }
+    };
+
+    if (showModelDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [showModelDropdown]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,48 +181,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div className="px-6 py-3">
-      {/* 선택된 모델 정보 및 기능 정보 - 컴팩한 표시 */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center space-x-4">
-            {/* 모델 표시 */}
-            <div className="flex items-center space-x-2">
-              {selectedProvider === 'claude' ? (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium">
-                  <Star className="w-3.5 h-3.5" />
-                  <span>Claude</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>Gemini</span>
-                </div>
-              )}
-              
-              {/* 에이전트 표시 */}
-              {selectedAgent && selectedAgent !== 'none' && (
-                <div className={`px-3 py-1.5 rounded-full text-sm font-medium ${
-                  selectedAgent === 'web_search' 
-                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                    : selectedAgent === 'deep_research'
-                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
-                    : 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
-                }`}>
-                  {AGENT_TYPE_MAP[selectedAgent]?.name}
-                </div>
-              )}
-            </div>
-          </div>
-          
-          {/* 상태 표시 */}
-          <div className="flex items-center space-x-2">
-            <div className={`w-2 h-2 rounded-full ${
-              isTyping ? 'bg-amber-400 animate-pulse' : 'bg-green-400'
-            }`}></div>
-            <span className="text-slate-500 dark:text-slate-400 text-sm">
-              {isTyping ? 'AI 응답 중...' : '대화 준비됨'}
-            </span>
-          </div>
+      {/* AI 상태 표시 */}
+      <div className="mb-3 flex justify-end">
+        <div className="flex items-center space-x-2">
+          <div className={`w-2 h-2 rounded-full ${
+            isTyping ? 'bg-amber-400 animate-pulse' : 'bg-green-400'
+          }`}></div>
+          <span className="text-slate-500 dark:text-slate-400 text-sm">
+            {isTyping ? 'AI 응답 중...' : '대화 준비됨'}
+          </span>
         </div>
       </div>
 
@@ -255,145 +267,152 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </button>
               )}
               
-              {/* 모델/기능 선택 버튼 */}
-              <div className="relative">
+              {/* 모델 선택 드롭다운 */}
+              <div className="relative" ref={modelDropdownRef}>
                 <button
                   type="button"
-                  ref={dropdownButtonRef}
-                  onClick={() => setShowModelSelector(!showModelSelector)}
+                  onClick={() => setShowModelDropdown(!showModelDropdown)}
                   className={`flex items-center space-x-2 ${
                     isMobile ? 'px-2 py-1' : 'px-3 py-1.5'
                   } text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all duration-200 ${
                     isMobile ? 'text-xs' : 'text-sm'
                   }`}
-                  title="모델 및 기능 선택"
+                  title="모델 선택"
                 >
-                  <span>{isMobile ? 'AI' : 'AI 설정'}</span>
-                  <ChevronDown className={`${isMobile ? 'w-3 h-3' : 'w-4 h-4'} transition-transform ${showModelSelector ? 'rotate-180' : ''}`} />
+                  {/* Provider 아이콘 */}
+                  {currentModel?.provider === 'claude' ? (
+                    <Star className="w-4 h-4 text-orange-500" />
+                  ) : (
+                    <Zap className="w-4 h-4 text-blue-500" />
+                  )}
+                  <span className="hidden sm:inline">{currentModel?.name?.replace(/Claude |Gemini /, '') || 'Model'}</span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${
+                    showModelDropdown ? 'rotate-180' : ''
+                  }`} />
                 </button>
-                
-                {/* 모델 선택 드롭다운 */}
-                {showModelSelector && (
+
+                {/* 모델 드롭다운 메뉴 */}
+                {showModelDropdown && (
                   <div className={`absolute bottom-full mb-2 ${
-                    isMobile ? 'right-0 left-0' : 'right-0'
-                  } bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 ${
-                    isMobile ? 'p-3' : 'p-4'
-                  } ${
-                    isMobile ? 'w-full' : 'w-80'
-                  } z-50 max-h-96 overflow-y-auto`}
-                >
-                  <div className="space-y-4">
-                      {/* Provider 선택 */}
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                          AI 모델
-                        </label>
-                        <div className="flex bg-slate-100 dark:bg-slate-700 p-1 rounded-xl">
-                          <button
-                            type="button"
-                            onClick={() => handleProviderChange('claude')}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                              selectedProvider === 'claude'
-                                ? 'bg-white dark:bg-slate-600 text-orange-700 dark:text-orange-300 shadow-sm' 
-                                : 'text-slate-600 dark:text-slate-400'
-                            }`}
-                          >
-                            <Star className="w-4 h-4" />
-                            Claude
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleProviderChange('gemini')}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                              selectedProvider === 'gemini'
-                                ? 'bg-white dark:bg-slate-600 text-blue-700 dark:text-blue-300 shadow-sm' 
-                                : 'text-slate-600 dark:text-slate-400'
-                            }`}
-                          >
-                            <Zap className="w-4 h-4" />
-                            Gemini
-                          </button>
-                        </div>
+                    isMobile ? 'left-0 w-80' : 'left-0 w-80'
+                  } bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-3 z-50 max-h-96 overflow-y-auto`}>
+                    <div className="space-y-1">
+                      {/* Claude 모델들 */}
+                      <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                        Claude
                       </div>
-
-                      {/* 모델 상세 선택 */}
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                          모델 버전
-                        </label>
-                        <div className="space-y-2">
-                          {availableModels.map((model) => (
-                            <button
-                              key={model.id}
-                              type="button"
-                              onClick={() => onModelChange(model.id)}
-                              className={`w-full text-left p-3 rounded-xl transition-all ${
-                                selectedModel === model.id
-                                  ? 'bg-primary-50 dark:bg-primary-900/20 border-2 border-primary-200 dark:border-primary-700'
-                                  : 'bg-slate-50 dark:bg-slate-700/50 border-2 border-transparent hover:border-slate-200 dark:hover:border-slate-600'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-medium text-slate-900 dark:text-slate-100">
-                                  {model.name}
-                                </span>
-                                <div className="flex items-center space-x-1">
-                                  {model.isRecommended && <Star className="w-4 h-4 text-amber-500" />}
-                                  {model.speed === 'fast' && <Zap className="w-4 h-4 text-green-500" />}
-                                </div>
-                              </div>
-                              <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                                {model.description}
-                              </p>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 기능 선택 */}
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                          기능 (선택사항)
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          {Object.values(AGENT_TYPE_MAP).map((agent) => (
-                            <button
-                              key={agent.id}
-                              type="button"
-                              onClick={() => onAgentChange(agent.id)}
-                              className={`p-3 rounded-xl text-left transition-all ${
-                                selectedAgent === agent.id
-                                  ? 'bg-primary-50 dark:bg-primary-900/20 border-2 border-primary-200 dark:border-primary-700'
-                                  : 'bg-slate-50 dark:bg-slate-700/50 border-2 border-transparent hover:border-slate-200 dark:hover:border-slate-600'
-                              }`}
-                            >
-                              <div className="flex items-center space-x-2 mb-1">
-                                <span className="text-lg">{agent.icon}</span>
-                                <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
-                                  {agent.name}
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-600 dark:text-slate-400">
-                                {agent.description}
-                              </p>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {/* 닫기 버튼 */}
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                      {MODEL_MAP.claude.map((model) => (
                         <button
+                          key={model.id}
                           type="button"
-                          onClick={() => setShowModelSelector(false)}
-                          className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2 px-4 rounded-xl transition-all duration-200 text-sm font-medium"
+                          onClick={() => handleModelChange(model.id)}
+                          className={`w-full text-left p-3 rounded-lg transition-all ${
+                            selectedModel === model.id
+                              ? 'bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-700'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                          }`}
                         >
-                          설정 완료
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <Star className="w-3 h-3 text-orange-500" />
+                              <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
+                                {model.name.replace('Claude ', '')}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              {model.isRecommended && <Star className="w-3 h-3 text-amber-500" />}
+                              {model.speed === 'fast' && <Zap className="w-3 h-3 text-green-500" />}
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            {model.description}
+                          </p>
                         </button>
+                      ))}
+                      
+                      {/* Gemini 모델들 */}
+                      <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mt-3">
+                        Gemini
                       </div>
+                      {MODEL_MAP.gemini.map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => handleModelChange(model.id)}
+                          className={`w-full text-left p-3 rounded-lg transition-all ${
+                            selectedModel === model.id
+                              ? 'bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-700'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <Zap className="w-3 h-3 text-blue-500" />
+                              <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
+                                {model.name.replace('Gemini ', '')}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              {model.isRecommended && <Star className="w-3 h-3 text-amber-500" />}
+                              {model.speed === 'fast' && <Zap className="w-3 h-3 text-green-500" />}
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            {model.description}
+                          </p>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* 에이전트 기능 토글 버튼들 */}
+              <div className="flex space-x-1">
+                {/* 웹 검색 버튼 */}
+                <button
+                  type="button"
+                  onClick={() => handleAgentToggle('web_search')}
+                  className={`flex items-center space-x-1 px-2 py-1.5 rounded-lg border transition-all duration-200 ${
+                    selectedAgent === 'web_search'
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300'
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-green-200 dark:hover:border-green-700 hover:bg-green-50 dark:hover:bg-green-900/10'
+                  }`}
+                  title="웹 검색 기능"
+                >
+                  <span className="text-sm">🔍</span>
+                  <span className="text-xs font-medium hidden sm:inline">검색</span>
+                </button>
+
+                {/* 심층 리서치 버튼 */}
+                <button
+                  type="button"
+                  onClick={() => handleAgentToggle('deep_research')}
+                  className={`flex items-center space-x-1 px-2 py-1.5 rounded-lg border transition-all duration-200 ${
+                    selectedAgent === 'deep_research'
+                      ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-purple-200 dark:hover:border-purple-700 hover:bg-purple-50 dark:hover:bg-purple-900/10'
+                  }`}
+                  title="심층 리서치 기능"
+                >
+                  <span className="text-sm">📊</span>
+                  <span className="text-xs font-medium hidden sm:inline">리서치</span>
+                </button>
+
+                {/* Canvas 버튼 */}
+                <button
+                  type="button"
+                  onClick={() => handleAgentToggle('canvas')}
+                  className={`flex items-center space-x-1 px-2 py-1.5 rounded-lg border transition-all duration-200 ${
+                    selectedAgent === 'canvas'
+                      ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300'
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-200 dark:hover:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/10'
+                  }`}
+                  title="Canvas 워크스페이스"
+                >
+                  <span className="text-sm">🎨</span>
+                  <span className="text-xs font-medium hidden sm:inline">Canvas</span>
+                </button>
               </div>
             </div>
             
@@ -444,9 +463,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         onChange={handleFileSelect}
         className="hidden"
       />
-      
-      {/* 모델/기능 선택 모달 - 필요시 추가 */}
-      {/* TODO: 모델 선택 모달 구현 */}
     </div>
   );
 };

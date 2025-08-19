@@ -42,6 +42,9 @@ export interface ChatResponse {
     original_query?: string;
     context_integrated_queries?: string[];
     has_conversation_context?: boolean;
+    needs_more_info?: boolean;
+    information_gaps?: InformationGap[];
+    suggested_questions?: string[];
     [key: string]: any;
   };
 }
@@ -85,6 +88,17 @@ export interface CitationStats {
   citationTrends?: Record<string, any>;
 }
 
+// 정보 부족 분석 관련 타입
+export interface InformationGap {
+  type: 'temporal' | 'spatial' | 'conditional' | 'preferential' | 'quantitative' | 'categorical';
+  field: string;
+  description: string;
+  urgency: 'critical' | 'high' | 'medium' | 'low';
+  question: string;
+  suggestions: string[];
+  context_hint?: string;
+}
+
 // 대화 히스토리 타입
 export interface ConversationHistory {
   id: string;
@@ -124,7 +138,7 @@ export interface AgentExecuteResponse {
 export type LLMProvider = 'claude' | 'gemini';
 
 // LLM 모델 타입
-export type LLMModel = 'claude-4' | 'claude-3.7' | 'claude-3.5' | 'claude-haiku' | 'gemini-pro' | 'gemini-flash' | 'gemini-1.0';
+export type LLMModel = 'claude-4' | 'claude-3.7' | 'claude-3.5' | 'claude-haiku' | 'gemini-2.5-pro' | 'gemini-2.5-flash' | 'gemini-2.0-pro' | 'gemini-2.0-flash';
 
 // 에이전트 타입 (none 추가)
 export type AgentType = 'none' | 'web_search' | 'deep_research' | 'canvas';
@@ -189,29 +203,37 @@ export const MODEL_MAP: Record<LLMProvider, ModelInfo[]> = {
   ],
   gemini: [
     {
-      id: 'gemini-pro',
-      name: 'Gemini 1.5 Pro',
-      description: '고성능 멀티모달 모델',
+      id: 'gemini-2.5-pro',
+      name: 'Gemini 2.5 Pro',
+      description: '최신 고성능 멀티모달 모델',
       provider: 'gemini',
       speed: 'medium',
       capabilities: ['reasoning', 'multimodal', 'analysis', 'creative'],
       isRecommended: true,
     },
     {
-      id: 'gemini-flash',
-      name: 'Gemini 1.5 Flash',
-      description: '빠르고 효율적인 모델',
+      id: 'gemini-2.5-flash',
+      name: 'Gemini 2.5 Flash',
+      description: '최신 고속 멀티모달 모델',
       provider: 'gemini',
       speed: 'fast',
       capabilities: ['reasoning', 'quick_tasks', 'multimodal'],
     },
     {
-      id: 'gemini-1.0',
-      name: 'Gemini 1.0 Pro',
-      description: '안정적인 기본 모델',
+      id: 'gemini-2.0-pro',
+      name: 'Gemini 2.0 Pro',
+      description: '안정적인 고성능 모델',
       provider: 'gemini',
       speed: 'medium',
-      capabilities: ['reasoning', 'analysis'],
+      capabilities: ['reasoning', 'analysis', 'multimodal'],
+    },
+    {
+      id: 'gemini-2.0-flash',
+      name: 'Gemini 2.0 Flash',
+      description: '빠르고 효율적인 모델',
+      provider: 'gemini',
+      speed: 'fast',
+      capabilities: ['reasoning', 'quick_tasks', 'multimodal'],
     },
   ],
 };
