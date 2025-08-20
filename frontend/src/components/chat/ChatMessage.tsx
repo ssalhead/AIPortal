@@ -429,8 +429,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 </div>
               )}
               
-              {/* 에이전트 뱃지 - 모바일에서는 더 간결하게 */}
-              {agentType && agentType !== 'none' && (
+              {/* 에이전트 뱃지 - 명확한 기능 사용시에만 표시 */}
+              {agentType && ['web_search', 'deep_research', 'canvas'].includes(agentType) && (
                 <span className={`${isMobile ? 'ml-1' : 'ml-2'} px-2 py-0.5 ${
                   isMobile ? 'text-xs' : 'text-xs'
                 } font-medium rounded-full ${
@@ -443,11 +443,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                   {isMobile ? (
                     agentType === 'web_search' ? '검색' : 
                     agentType === 'deep_research' ? '리서치' : 
-                    agentType === 'canvas' ? 'Canvas' : '분석'
+                    'Canvas'
                   ) : (
                     agentType === 'web_search' ? '웹 검색' : 
                     agentType === 'deep_research' ? '심층 리서치' : 
-                    agentType === 'canvas' ? 'Canvas' : '문서 분석'
+                    'Canvas'
                   )}
                 </span>
               )}
@@ -506,7 +506,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 query={searchQuery || '검색 쿼리'}
                 results={searchResults}
                 collapsible={true}
-                defaultCollapsed={false}
+                defaultCollapsed={true}
                 maxResults={3}
                 showMetadata={true}
                 originalQuery={originalQuery}
