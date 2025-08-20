@@ -492,9 +492,16 @@ export const ChatPage: React.FC = () => {
                 setCurrentProgressMessage(progressMessage);
                 console.log('📝 진행 메시지 업데이트:', progressMessage);
               },
-              // 청크 콜백 - 실시간 스트리밍 텍스트 표시
+              // 청크 콜백 - 실시간 스트리밍 텍스트 표시 (줄바꿈 감지 추가)
               (text: string, isFirst: boolean, isFinal: boolean) => {
-                console.log('📝 청크 수신:', text, '(첫 번째:', isFirst, ', 마지막:', isFinal, ')');
+                console.log('📝 청크 수신:', {
+                  text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
+                  길이: text.length,
+                  줄바꿈포함: text.includes('\n'),
+                  줄바꿈개수: (text.match(/\n/g) || []).length,
+                  첫번째: isFirst,
+                  마지막: isFinal
+                });
                 
                 if (isFirst) {
                   // 첫 번째 청크에서 스트리밍 모드 시작
@@ -503,10 +510,26 @@ export const ChatPage: React.FC = () => {
                   setStreamingMessage(text);
                 } else if (!isFinal) {
                   // 중간 청크들은 누적하여 표시
-                  setStreamingMessage(prev => prev + text);
+                  setStreamingMessage(prev => {
+                    const newFullText = prev + text;
+                    console.log('🔄 텍스트 누적:', {
+                      이전길이: prev.length,
+                      새청크길이: text.length,
+                      전체길이: newFullText.length,
+                      새청크줄바꿈: text.includes('\n')
+                    });
+                    return newFullText;
+                  });
                 } else {
                   // 마지막 청크 - 스트리밍 완료 준비
-                  setStreamingMessage(prev => prev + text);
+                  setStreamingMessage(prev => {
+                    const finalText = prev + text;
+                    console.log('🏁 최종 텍스트 완성:', {
+                      최종길이: finalText.length,
+                      총줄수: (finalText.match(/\n/g) || []).length + 1
+                    });
+                    return finalText;
+                  });
                 }
               },
               // 최종 결과 콜백
@@ -1087,6 +1110,8 @@ export const ChatPage: React.FC = () => {
                         isTyping={false}
                         model={currentModel}
                         agentType={selectedAgent}
+                        streamingChunk={streamingMessage}
+                        isStreamingMode={true}
                       />
                     ) : (currentProgressMessage || isTyping) ? (
                       <ChatMessage

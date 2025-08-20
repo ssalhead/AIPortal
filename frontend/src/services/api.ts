@@ -158,7 +158,8 @@ class ApiService {
                   break;
                   
                 case 'result':
-                  console.log('🎯 스트리밍 result 이벤트:', eventData.data);
+                  console.log('🎯 스트리밍 result 이벤트 (정상 완료):', eventData.data);
+                  // result 이벤트는 정상 완료를 의미하므로 onResult 콜백 호출
                   onResult(eventData.data);
                   break;
                   
@@ -168,6 +169,7 @@ class ApiService {
                   return;
                   
                 case 'error':
+                  console.error('❌ 스트리밍 에러 이벤트:', eventData.data);
                   onError(eventData.data.message);
                   return;
                   

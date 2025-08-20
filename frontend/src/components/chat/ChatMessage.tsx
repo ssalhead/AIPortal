@@ -2,7 +2,7 @@
  * 채팅 메시지 컴포넌트 - Gemini 스타일
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TypingIndicator } from '../ui/TypingIndicator';
 import { Citation, CitationPreview } from '../citation/Citation';
 import { SourceList } from '../citation/SourceList';
@@ -10,7 +10,7 @@ import { SearchResultsCard } from '../search/SearchResultsCard';
 import { SearchProgressIndicator, type SearchStep } from '../SearchProcess/SearchProgressIndicator';
 import type { SearchResult } from '../search/SearchResultsCard';
 import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from 'lucide-react';
-import { SimpleMarkdown } from '../ui/SimpleMarkdown';
+import { ProgressiveMarkdown, type ProgressiveMarkdownRef } from '../ui/ProgressiveMarkdown';
 import type { Citation as CitationData, Source as SourceData } from '../../types';
 import { feedbackService } from '../../services/feedbackService';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -58,6 +58,10 @@ interface ChatMessageProps {
   citationMode?: 'full' | 'preview' | 'none';
   /** 커스텀 타이핑 메시지 */
   customTypingMessage?: string;
+  /** 스트리밍 청크 데이터 (스트리밍 모드용) */
+  streamingChunk?: string;
+  /** 스트리밍 모드 여부 */
+  isStreamingMode?: boolean;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -82,11 +86,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   hasContext = false,
   citationMode = 'preview',
   customTypingMessage,
+  streamingChunk,
+  isStreamingMode = false,
 }) => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [rating, setRating] = useState<'up' | 'down' | null>(null);
   const [feedback, setFeedback] = useState<MessageFeedback | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  
+  // ProgressiveMarkdown ref
+  const progressiveMarkdownRef = useRef<ProgressiveMarkdownRef>(null);
+  const lastChunkRef = useRef<string>('');
+  const streamingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // 반응형 hooks
   const { isMobile, isTablet } = useResponsive();
@@ -107,6 +118,62 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       loadExistingFeedback();
     }
   }, [messageId, isUser]);
+
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // 스트리밍 청크 처리 (중복 방지)
+  useEffect(() => {
+    if (isStreamingMode && streamingChunk && progressiveMarkdownRef.current) {
+      // 증분 청크만 전달 (중복 방지)
+      const previousLength = lastChunkRef.current.length;
+      const newChunk = streamingChunk.slice(previousLength);
+      
+      if (newChunk.length > 0) {
+        console.log('📡 스트리밍 청크 처리:', {
+          새청크: newChunk.length + '자',
+          누적: streamingChunk.length + '자'
+        });
+        
+        progressiveMarkdownRef.current.appendChunk(streamingChunk); // 전체 누적 텍스트 전달
+        lastChunkRef.current = streamingChunk;
+      }
+      
+      // 스트리밍 완료 감지를 위한 타이머 설정 (1초 후 완료로 간주)
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
+      }
+      
+      streamingTimeoutRef.current = setTimeout(() => {
+        if (progressiveMarkdownRef.current) {
+          progressiveMarkdownRef.current.endStreaming();
+        }
+      }, 1000); // 1초간 새로운 청크가 없으면 완료로 간주
+    }
+  }, [streamingChunk, isStreamingMode]);
+
+  // 스트리밍 완료 처리
+  useEffect(() => {
+    console.log('🔄 스트리밍 모드 변경 감지:', { 
+      isStreamingMode, 
+      hasRef: !!progressiveMarkdownRef.current, 
+      hasLastChunk: !!lastChunkRef.current 
+    });
+    
+    if (!isStreamingMode && progressiveMarkdownRef.current && lastChunkRef.current) {
+      console.log('🏁 스트리밍 완료 - endStreaming() 호출');
+      progressiveMarkdownRef.current.endStreaming();
+      lastChunkRef.current = '';
+    } else if (!isStreamingMode) {
+      console.log('⚠️ endStreaming 호출되지 않음 - 조건 미충족');
+    }
+  }, [isStreamingMode]);
 
   const loadExistingFeedback = async () => {
     if (!messageId) return;
@@ -241,7 +308,14 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     if (!citations.length || citationMode === 'none') {
       // AI 응답은 마크다운 렌더링, 사용자 메시지는 일반 텍스트
       if (!isUser) {
-        return <SimpleMarkdown text={message} className="text-sm leading-relaxed" />;
+        return (
+          <ProgressiveMarkdown 
+            ref={progressiveMarkdownRef}
+            text={isStreamingMode ? '' : message} // 스트리밍 모드가 아닐 때만 텍스트 설정
+            isStreaming={isStreamingMode}
+            className=""
+          />
+        );
       }
       return <div className="text-sm leading-relaxed whitespace-pre-wrap">{message}</div>;
     }
