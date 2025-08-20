@@ -177,7 +177,7 @@
   @apply border-t border-slate-300 dark:border-slate-600 my-4;
 }
 
-/* 스트리밍 애니메이션 효과 */
+/* 스트리밍 애니메이션 효과 - Gemini 스타일 */
 .streaming-markdown.streaming {
   position: relative;
 }
@@ -185,19 +185,137 @@
 .streaming-markdown.streaming::after {
   content: "";
   display: inline-block;
-  width: 2px;
+  width: 1.5px;
   height: 1em;
-  background-color: #3b82f6;
-  margin-left: 1px;
-  animation: streaming-cursor-blink 1s infinite;
+  background: linear-gradient(0deg, #3b82f6, #60a5fa, #93c5fd);
+  margin-left: 2px;
+  border-radius: 1px;
+  animation: gemini-cursor-flow 1.2s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4), 0 0 4px rgba(147, 197, 253, 0.2);
+  filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.6));
 }
 
-@keyframes streaming-cursor-blink {
-  0%, 50% {
+@keyframes gemini-cursor-flow {
+  0%, 100% {
     opacity: 1;
+    transform: scaleY(1) scaleX(1);
+    filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.6));
   }
-  51%, 100% {
+  25% {
+    opacity: 0.8;
+    transform: scaleY(1.1) scaleX(0.9);
+    filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.8));
+  }
+  50% {
+    opacity: 0.4;
+    transform: scaleY(0.9) scaleX(1.1);
+    filter: drop-shadow(0 0 1px rgba(59, 130, 246, 0.4));
+  }
+  75% {
+    opacity: 0.6;
+    transform: scaleY(1.05) scaleX(0.95);
+    filter: drop-shadow(0 0 3px rgba(59, 130, 246, 0.7));
+  }
+}
+
+/* Gemini 스타일 "안개낀" 텍스트 효과 */
+.streaming-markdown .gemini-ghost-text {
+  opacity: 0.35;
+  filter: blur(0.8px);
+  color: rgba(148, 163, 184, 0.8); /* 회색빛 안개 효과 */
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: gemini-ghost-shimmer 2s ease-in-out infinite;
+}
+
+.streaming-markdown .gemini-completed-text {
+  opacity: 1;
+  filter: blur(0);
+  color: inherit;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 안개 텍스트의 미묘한 반짝임 효과 */
+@keyframes gemini-ghost-shimmer {
+  0%, 100% {
+    opacity: 0.35;
+    filter: blur(0.8px);
+  }
+  50% {
+    opacity: 0.5;
+    filter: blur(0.4px);
+  }
+}
+
+/* 글자별 개별 애니메이션 효과 */
+.streaming-markdown .gemini-char {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(4px);
+  filter: blur(2px);
+  animation: gemini-char-appear 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes gemini-char-appear {
+  0% {
     opacity: 0;
+    transform: translateY(4px);
+    filter: blur(2px);
+  }
+  50% {
+    opacity: 0.4;
+    transform: translateY(2px);
+    filter: blur(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* 그라데이션 마스크 효과 (텍스트 끝부분) */
+.streaming-markdown .gemini-gradient-mask {
+  position: relative;
+}
+
+.streaming-markdown .gemini-gradient-mask::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(255, 255, 255, 0.8) 100%
+  );
+  pointer-events: none;
+}
+
+.dark .streaming-markdown .gemini-gradient-mask::after {
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(15, 23, 42, 0.8) 100%
+  );
+}
+
+/* 부드러운 텍스트 출현 애니메이션 (기존 유지) */
+.streaming-markdown .streaming-text-appear {
+  animation: text-fade-in 0.3s ease-out;
+}
+
+@keyframes text-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+    filter: blur(1px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
   }
 }
 

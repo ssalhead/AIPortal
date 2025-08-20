@@ -34,6 +34,7 @@ interface ParsedLine {
   element: React.ReactNode;
   raw: string;
   isComplete: boolean; // 줄이 완성되었는지 여부
+  isGhost?: boolean; // Gemini 스타일 안개 효과 여부
 }
 
 interface IncrementalState {
@@ -207,14 +208,15 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
     const updateParsedLines = useCallback((state: IncrementalState) => {
       const allLines: ParsedLine[] = [...state.completedLines];
       
-      // 현재 진행 중인 줄 추가 (불완전할 수 있음)
+      // 현재 진행 중인 줄 추가 (불완전할 수 있음) - Gemini 안개 효과
       if (state.currentLine) {
         const currentLineId = `current-line-${state.completedLines.length}`;
         allLines.push({
           id: currentLineId,
           element: parseMarkdownLine(state.currentLine, true),
           raw: state.currentLine,
-          isComplete: false
+          isComplete: false,
+          isGhost: true // 진행 중인 줄은 안개 효과
         });
       }
       
@@ -265,7 +267,8 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
               id: lineId,
               element: parseMarkdownLine(line, false),
               raw: line,
-              isComplete: true
+              isComplete: true,
+              isGhost: false // 완성된 줄은 선명하게 (안개 → 선명 전환)
             };
             
             newCompletedLines.push(parsedLine);
@@ -319,7 +322,8 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
             id: finalLineId,
             element: parseMarkdownLine(prevState.currentLine, false),
             raw: prevState.currentLine,
-            isComplete: true
+            isComplete: true,
+            isGhost: false // 완성시 선명하게
           });
         }
         
@@ -354,7 +358,8 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
         id: `line-${index}`,
         element: parseMarkdownLine(line, false),
         raw: line,
-        isComplete: true
+        isComplete: true,
+        isGhost: false // 비스트리밍 텍스트는 선명하게
       }));
       
       setIncrementalState({
@@ -426,12 +431,20 @@ interface MemoizedLineRendererProps {
 }
 
 const MemoizedLineRenderer = React.memo<MemoizedLineRendererProps>(({ line }) => {
-  return <React.Fragment>{line.element}</React.Fragment>;
+  // Gemini 스타일 안개 효과 클래스 적용
+  const lineClass = line.isGhost ? 'gemini-ghost-text' : 'gemini-completed-text';
+  
+  return (
+    <div className={lineClass}>
+      {line.element}
+    </div>
+  );
 }, (prevProps, nextProps) => {
   // 줄의 내용이 동일하면 리렌더링 하지 않음
   return prevProps.line.id === nextProps.line.id && 
          prevProps.line.raw === nextProps.line.raw &&
-         prevProps.line.isComplete === nextProps.line.isComplete;
+         prevProps.line.isComplete === nextProps.line.isComplete &&
+         prevProps.line.isGhost === nextProps.line.isGhost;
 });
 
 MemoizedLineRenderer.displayName = 'MemoizedLineRenderer';
