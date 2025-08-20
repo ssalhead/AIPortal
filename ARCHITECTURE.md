@@ -1861,11 +1861,109 @@ GRAFANA_DASHBOARD_CONFIG = {
 
 ---
 
-**문서 버전**: v1.0  
-**최종 업데이트**: 2025-01-06  
+## 🚀 **최신 아키텍처 개선 (2025-08-19)**
+
+### ✅ 인라인 UI 아키텍처 혁신
+```typescript
+// 새로운 통합 ChatInput 아키텍처
+interface ChatInputArchitecture {
+  // 팝업 기반 → 인라인 통합 설계
+  popup_elimination: {
+    before: "별도 PopupAISettings 컴포넌트",
+    after: "ChatInput 내부 통합 드롭다운",
+    benefits: ["UX 단순화", "상태 관리 최적화", "접근성 향상"]
+  },
+  
+  // 모델 선택 아키텍처  
+  model_selection: {
+    component: "InlineModelDropdown",
+    positioning: "bottom-full mb-2 (상향 열림)",
+    providers: ["Claude (Star 아이콘)", "Gemini (Zap 아이콘)"],
+    models: "8개 통합 (4 + 4)",
+    responsive: "isMobile 기반 적응형 크기"
+  },
+  
+  // 기능 토글 시스템
+  feature_toggles: {
+    layout: "inline horizontal",
+    position: "파일 첨부 아이콘 옆",
+    buttons: ["웹 검색 🔍", "심층 리서치 📊", "Canvas 🎨"],
+    interaction: "단일 선택 + 재클릭 해제",
+    styling: "반응형 텍스트 라벨"
+  }
+}
+```
+
+### ✅ 메타 검색 시스템 아키텍처
+```python
+# 2단계 메타 검색 체인 설계
+class MetaSearchArchitecture:
+    def __init__(self):
+        self.conversation_context_service = ConversationContextService()
+        self.information_gap_analyzer = InformationGapAnalyzer() 
+        self.agent_suggestion_modal = AgentSuggestionModal()
+    
+    async def meta_search_pipeline(self, user_query: str, context: Dict):
+        # 1단계: 사용자 의도 + 대화 맥락 분석
+        intent_analysis = await self.analyze_user_intent(user_query, context)
+        
+        # 2단계: 최적화된 검색 쿼리 생성
+        optimized_queries = await self.generate_search_queries(intent_analysis)
+        
+        # 3단계: 정보 부족 영역 식별
+        info_gaps = await self.information_gap_analyzer.analyze(user_query)
+        
+        # 4단계: 최적 에이전트 추천
+        recommended_agent = await self.suggest_optimal_agent(intent_analysis)
+        
+        return SearchPlan(
+            queries=optimized_queries,
+            info_gaps=info_gaps,
+            recommended_agent=recommended_agent
+        )
+```
+
+### ✅ Gemini 2.x 모델 아키텍처 업그레이드
+```typescript
+// 업그레이드된 모델 타입 시스템
+type GeminiModelArchitecture = {
+  "gemini-2.5-pro": {
+    capabilities: ["reasoning", "multimodal", "analysis", "creative"],
+    speed: "medium",
+    use_cases: ["대용량 컨텍스트", "멀티모달 작업"],
+    isRecommended: true
+  },
+  "gemini-2.5-flash": {
+    capabilities: ["reasoning", "quick_tasks", "multimodal"], 
+    speed: "fast",
+    use_cases: ["빠른 추론", "실시간 처리"]
+  },
+  "gemini-2.0-pro": {
+    capabilities: ["reasoning", "analysis", "multimodal"],
+    speed: "medium", 
+    use_cases: ["안정적인 고성능 작업"]
+  },
+  "gemini-2.0-flash": {
+    capabilities: ["reasoning", "quick_tasks", "multimodal"],
+    speed: "fast",
+    use_cases: ["빠르고 효율적인 처리"]
+  }
+}
+```
+
+### 🔧 컴포넌트 아키텍처 혁신
+- **단일 책임 원칙**: ChatInput이 모든 AI 설정 담당
+- **상태 동기화**: Provider-Model 자동 연동 로직
+- **반응형 설계**: 모바일/데스크톱 통합 대응
+- **타입 안전성**: 완전한 TypeScript 타입 시스템
+
+---
+
+**문서 버전**: v1.1  
+**최종 업데이트**: 2025-08-19  
 **작성자**: AI 포탈 아키텍처 팀  
 **검토자**: CTO
 
 ---
 
-> 📚 **참고사항**: 이 아키텍처 문서는 develop.md의 설계 명세를 구체적인 구현 가이드로 변환한 것입니다. 실제 구현 시 프로젝트 요구사항과 환경에 맞게 조정하여 사용하시기 바랍니다.
+> 📚 **참고사항**: 이 아키텍처 문서는 develop.md의 설계 명세를 구체적인 구현 가이드로 변환한 것입니다. 최신 인라인 UI 시스템과 메타 검색 아키텍처가 추가되었습니다. 실제 구현 시 프로젝트 요구사항과 환경에 맞게 조정하여 사용하시기 바랍니다.

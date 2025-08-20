@@ -1318,6 +1318,379 @@ function generateId(): string {
 
 ---
 
+## 🚀 **최신 구현 패턴 업데이트 (2025-08-19)**
+
+### ✅ 인라인 UI 구현 패턴
+```typescript
+// 새로운 인라인 ChatInput 구현 패턴
+interface InlineChatInputPattern {
+  // 팝업 제거 → 인라인 통합
+  architecture: {
+    elimination: "PopupAISettings 컴포넌트 완전 제거",
+    integration: "ChatInput 내부 통합 드롭다운",
+    benefits: ["UX 단순화", "상태 관리 최적화", "접근성 향상"]
+  },
+  
+  // 모델 선택 드롭다운 패턴
+  model_dropdown: {
+    positioning: "bottom-full mb-2 (상향 열림)",
+    trigger: "Provider 아이콘 + 간소화된 모델명",
+    providers: {
+      claude: "Star 아이콘 (w-4 h-4 text-orange-500)",
+      gemini: "Zap 아이콘 (w-4 h-4 text-blue-500)"
+    },
+    responsive: "isMobile ? 'px-2 py-1' : 'px-3 py-1.5'"
+  },
+  
+  // 기능 토글 버튼 패턴
+  feature_toggles: {
+    layout: "flex space-x-1 (수평 배치)",
+    position: "모델 드롭다운 다음, 파일 첨부 아이콘 앞",
+    interaction: "단일 선택 + 재클릭 해제 로직",
+    styling: {
+      active: "bg-{color}-50 border-{color}-200 text-{color}-700",
+      inactive: "bg-white border-slate-200 text-slate-600",
+      hover: "hover:border-{color}-200 hover:bg-{color}-50"
+    }
+  }
+}
+
+// 구현 예시
+const handleAgentToggle = (agentType: AgentType) => {
+  if (selectedAgent === agentType) {
+    onAgentChange('none'); // 같은 버튼 클릭시 해제
+  } else {
+    onAgentChange(agentType); // 다른 버튼 클릭시 변경
+  }
+};
+```
+
+### ✅ 메타 검색 시스템 구현 패턴
+```python
+# 2단계 메타 검색 구현 패턴
+class MetaSearchImplementation:
+    """메타 검색 시스템 구현 가이드"""
+    
+    # 1단계: 대화 맥락 분석 서비스
+    conversation_context_service = """
+    # backend/app/services/conversation_context_service.py
+    
+    class ConversationContextService:
+        async def analyze_context(self, conversation_id: str, user_query: str):
+            # 이전 대화 내용 분석
+            previous_messages = await self.get_conversation_history(conversation_id)
+            
+            # 맥락 추출
+            context = await self.extract_conversation_context(previous_messages)
+            
+            # 사용자 의도 분석
+            intent = await self.analyze_user_intent(user_query, context)
+            
+            return ContextAnalysis(
+                previous_context=context,
+                user_intent=intent,
+                contextual_keywords=self.extract_keywords(context, user_query),
+                temporal_context=self.extract_temporal_info(previous_messages)
+            )
+    """
+    
+    # 2단계: 정보 부족 분석기
+    information_gap_analyzer = """
+    # backend/app/agents/workers/information_gap_analyzer.py
+    
+    class InformationGapAnalyzer:
+        async def analyze(self, user_query: str, context: ContextAnalysis):
+            gaps = []
+            
+            # 시간적 정보 부족 확인
+            if self.needs_temporal_info(user_query):
+                gaps.append(InformationGap(
+                    type='temporal',
+                    field='time_range',
+                    description='구체적인 시간 범위가 필요합니다',
+                    urgency='high',
+                    question='언제부터 언제까지의 정보를 찾고 계신가요?'
+                ))
+            
+            # 공간적 정보 부족 확인
+            if self.needs_spatial_info(user_query):
+                gaps.append(InformationGap(
+                    type='spatial',
+                    field='location',
+                    description='지역 정보가 필요합니다',
+                    urgency='medium',
+                    question='어느 지역의 정보를 원하시나요?'
+                ))
+            
+            return gaps
+    """
+    
+    # 3단계: 에이전트 추천 시스템
+    agent_suggestion_modal = """
+    # frontend/src/components/ui/AgentSuggestionModal.tsx
+    
+    interface AgentSuggestion {
+      agent_type: AgentType;
+      confidence: number;
+      reason: string;
+      capabilities: string[];
+    }
+    
+    export const AgentSuggestionModal: React.FC<Props> = ({ suggestions, onSelect, onDismiss }) => {
+      return (
+        <Modal>
+          <div className="p-6">
+            <h3 className="text-lg font-semibold mb-4">추천 AI 에이전트</h3>
+            
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.agent_type}
+                onClick={() => onSelect(suggestion.agent_type)}
+                className="w-full p-4 border rounded-lg hover:bg-gray-50 text-left mb-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-medium">{AGENT_TYPE_MAP[suggestion.agent_type].name}</h4>
+                    <p className="text-sm text-gray-600 mt-1">{suggestion.reason}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-green-600">{Math.round(suggestion.confidence * 100)}% 적합</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      );
+    };
+    """
+```
+
+### ✅ Gemini 2.x 모델 업그레이드 패턴
+```typescript
+// 업그레이드된 모델 타입 시스템 패턴
+interface GeminiUpgradePattern {
+  // 모델 타입 정의
+  model_types: {
+    'gemini-2.5-pro': {
+      name: 'Gemini 2.5 Pro',
+      description: '최신 고성능 멀티모달 모델',
+      capabilities: ['reasoning', 'multimodal', 'analysis', 'creative'],
+      speed: 'medium',
+      isRecommended: true
+    },
+    'gemini-2.5-flash': {
+      name: 'Gemini 2.5 Flash', 
+      description: '최신 고속 멀티모달 모델',
+      capabilities: ['reasoning', 'quick_tasks', 'multimodal'],
+      speed: 'fast'
+    },
+    'gemini-2.0-pro': {
+      name: 'Gemini 2.0 Pro',
+      description: '안정적인 고성능 모델',
+      capabilities: ['reasoning', 'analysis', 'multimodal'],
+      speed: 'medium'
+    },
+    'gemini-2.0-flash': {
+      name: 'Gemini 2.0 Flash',
+      description: '빠르고 효율적인 모델',
+      capabilities: ['reasoning', 'quick_tasks', 'multimodal'],
+      speed: 'fast'
+    }
+  },
+  
+  // UI 표시 패턴
+  dropdown_display: {
+    provider_icon: '<Zap className="w-3 h-3 text-blue-500" />',
+    model_name_format: 'model.name.replace("Gemini ", "")', // "2.5 Pro" 형태로 표시
+    speed_indicator: 'model.speed === "fast" && <Zap className="w-3 h-3 text-green-500" />',
+    recommended_badge: 'model.isRecommended && <Star className="w-3 h-3 text-amber-500" />'
+  }
+}
+```
+
+### 🔧 개발 모범 사례 업데이트
+1. **컴포넌트 통합 원칙**: 관련 기능은 하나의 컴포넌트에서 관리
+2. **상태 동기화 패턴**: Provider 변경 시 첫 번째 모델 자동 설정
+3. **반응형 UI 패턴**: isMobile 기반 조건부 스타일링
+4. **타입 안전성**: 모든 모델 및 에이전트 타입 완전 정의
+
+---
+
+## 📝 스트리밍 시스템 구현 가이드라인 (2025-08-20)
+
+### 실시간 스트리밍 아키텍처
+
+#### 백엔드 청킹 시스템
+```python
+def split_response_into_natural_chunks(response: str, chunk_size_range: tuple = (15, 40)) -> List[str]:
+    """
+    자연스러운 한글 텍스트 분할 알고리즘
+    - 15-40자 크기 청크로 분할
+    - 줄바꿈 > 문장 끝 > 단어 경계 우선 분할
+    - 100% 원본 보존 보장 (재결합 검증)
+    """
+    if not response.strip():
+        return []
+    
+    min_size, max_size = chunk_size_range
+    chunks = []
+    start = 0
+    
+    while start < len(response):
+        chunk_end = start + max_size
+        if chunk_end >= len(response):
+            chunk_end = len(response)
+        else:
+            # 자연스러운 분할점 찾기
+            text_segment = response[start:chunk_end + 20]
+            
+            # 1순위: 줄바꿈
+            newline_pos = text_segment.rfind('\n', min_size - start, max_size - start + 1)
+            if newline_pos != -1:
+                chunk_end = start + newline_pos + 1
+            else:
+                # 2순위: 문장 끝 (.!?)
+                sentence_pos = max(
+                    text_segment.rfind('.', min_size - start, max_size - start + 1),
+                    text_segment.rfind('!', min_size - start, max_size - start + 1),
+                    text_segment.rfind('?', min_size - start, max_size - start + 1)
+                )
+                if sentence_pos != -1:
+                    chunk_end = start + sentence_pos + 1
+                else:
+                    # 3순위: 공백 (단어 경계)
+                    space_pos = text_segment.rfind(' ', min_size - start, max_size - start + 1)
+                    if space_pos != -1:
+                        chunk_end = start + space_pos
+        
+        chunk = response[start:chunk_end]
+        if chunk:
+            chunks.append(chunk)
+        start = chunk_end
+    
+    # 재결합 검증 (100% 정확성 보장)
+    recombined = ''.join(chunks)
+    if recombined != response:
+        return [response]  # 실패 시 전체 텍스트 반환
+    
+    return chunks
+```
+
+#### 프론트엔드 증분 파싱 시스템
+```typescript
+// ProgressiveMarkdown 컴포넌트 핵심 로직
+const appendChunk = useCallback((chunk: string) => {
+  // 새로 추가된 텍스트만 추출하여 처리
+  const newText = chunk.slice(incrementalState.lastProcessedLength);
+  if (newText.length === 0) return;
+  
+  // 줄바꿈 감지 및 완성된 줄과 진행 중인 줄 분리
+  const hasLineBreak = newText.includes('\n');
+  
+  setIncrementalState(prevState => {
+    const newCompletedLines = [...prevState.completedLines];
+    let newCurrentLine = prevState.currentLine;
+    
+    if (hasLineBreak) {
+      const combinedText = prevState.currentLine + newText;
+      const lines = combinedText.split('\n');
+      
+      // 마지막 줄을 제외한 모든 줄은 완성된 것으로 처리
+      for (let i = 0; i < lines.length - 1; i++) {
+        const parsedLine: ParsedLine = {
+          id: `line-${lineIdCounter.current++}`,
+          element: parseMarkdownLine(lines[i], false),
+          raw: lines[i],
+          isComplete: true
+        };
+        newCompletedLines.push(parsedLine);
+      }
+      
+      newCurrentLine = lines[lines.length - 1] || '';
+    } else {
+      newCurrentLine = prevState.currentLine + newText;
+    }
+    
+    return {
+      lastProcessedLength: chunk.length,
+      completedLines: newCompletedLines,
+      currentLine: newCurrentLine
+    };
+  });
+}, []);
+```
+
+#### SSE 스트리밍 프로토콜
+```typescript
+// API 서비스 스트리밍 이벤트 처리
+switch (eventData.type) {
+  case 'chunk':
+    // 청크 데이터 수신 - 타이핑 효과로 표시
+    const chunkData = eventData.data;
+    console.log('📝 청크 수신:', chunkData.text, '(인덱스:', chunkData.index, ')');
+    onChunk(chunkData.text, chunkData.index === 0, chunkData.is_final);
+    break;
+    
+  case 'result':
+    console.log('🎯 스트리밍 완료 - 최종 결과 수신');
+    onResult(eventData.data);
+    break;
+    
+  case 'error':
+    console.error('❌ 스트리밍 에러:', eventData.data);
+    onError(eventData.data.message);
+    break;
+}
+```
+
+### 성능 최적화 패턴
+
+#### React 렌더링 최적화
+```typescript
+// 개별 줄 렌더러 - React.memo로 불필요한 리렌더링 방지
+const MemoizedLineRenderer = React.memo<MemoizedLineRendererProps>(({ line }) => {
+  return <React.Fragment>{line.element}</React.Fragment>;
+}, (prevProps, nextProps) => {
+  // 줄의 내용이 동일하면 리렌더링 하지 않음
+  return prevProps.line.id === nextProps.line.id && 
+         prevProps.line.raw === nextProps.line.raw &&
+         prevProps.line.isComplete === nextProps.line.isComplete;
+});
+```
+
+#### 인라인 마크다운 파싱 캐시
+```typescript
+// 메모이제이션을 위한 캐시 시스템
+const parseInlineMarkdown = useMemo(() => {
+  const cache = new Map<string, React.ReactNode>();
+  
+  return (text: string): React.ReactNode => {
+    const cached = cache.get(text);
+    if (cached !== undefined) return cached;
+    
+    // 마크다운 파싱 로직...
+    const result = /* 파싱 결과 */;
+    
+    // 캐시에 저장 (최대 100개 항목만 유지)
+    if (cache.size > 100) {
+      const firstKey = cache.keys().next().value;
+      cache.delete(firstKey);
+    }
+    cache.set(text, result);
+    
+    return result;
+  };
+}, []);
+```
+
+---
+
+**문서 버전**: v2.1  
+**최종 업데이트**: 2025-08-20  
+**작성자**: AI 포탈 개발팀  
+**검토자**: 시니어 개발자
+
 <function_calls>
 <invoke name="TodoWrite">
 <parameter name="todos">[{"id": "1", "content": "Context7\uc744 \ud1b5\ud55c \ucd5c\uc2e0 \uae30\uc220 \uc2a4\ud0dd \ubb38\uc11c \uc218\uc9d1 (React, FastAPI, LangGraph, WebSocket)", "status": "completed"}, {"id": "2", "content": "\uae30\uc874 SYGenai \uc2dc\uc2a4\ud15c \uad6c\uc870 \ubd84\uc11d \ubc0f \uc7ac\uc0ac\uc6a9 \uac00\ub2a5 \ud328\ud134 \uc2dd\ubcc4", "status": "completed"}, {"id": "3", "content": "\ud558\uc774\ube0c\ub9ac\ub4dc \uc544\ud0a4\ud14d\ucc98 \uc124\uacc4 - \uae30\uc874 \uc790\uc0b0 + \ud601\uc2e0 \uc694\uc18c \ud1b5\ud569", "status": "completed"}, {"id": "4", "content": "LLM \ub77c\uc6b0\ud305 \uc804\ub7b5 \uc218\uc815 - Claude/Gemini \ubaa8\ub378 \ud55c\uc815", "status": "completed"}, {"id": "5", "content": "Tier1 \ub3c4\uba54\uc778 \uc5d0\uc774\uc804\ud2b8 MCP \uc124\uc815 \uc2dc\uc2a4\ud15c \uc124\uacc4", "status": "completed"}, {"id": "6", "content": "\uc0c8\ubbf8 GPT \uae30\ub2a5 \ud1a0\uae00 \uc2dc\uc2a4\ud15c \uc124\uacc4", "status": "completed"}, {"id": "7", "content": "Redis \ub300\uccb4 \ubc29\uc548 \uac80\ud1a0 \ubc0f \uc124\uacc4", "status": "completed"}, {"id": "8", "content": "\uc0ac\uc6a9\uc790 \ud504\ub85c\ud30c\uc77c \uc790\ub3d9 \uc218\uc9d1 \uc2dc\uc2a4\ud15c \uc124\uacc4", "status": "completed"}, {"id": "9", "content": "develop.md \ucd5c\uc885 \uc5c5\ub370\uc774\ud2b8 - \ud1b5\ud569 \uac1c\ubc1c \uba85\uc138\uc11c \uc791\uc131", "status": "completed"}, {"id": "10", "content": "dev_plan.md \uc0c1\uc138 \uacc4\ud68d \uc218\ub9bd - 4\ub2e8\uacc4 10\uc8fc \uc2e4\ud589 \uacc4\ud68d", "status": "completed"}, {"id": "11", "content": "\uc544\ud0a4\ud14d\ucc98 \uc124\uacc4\uc11c \ubc0f \uad6c\ud604 \uac00\uc774\ub4dc\ub77c\uc778 \ubb38\uc11c\ud654", "status": "completed"}]
