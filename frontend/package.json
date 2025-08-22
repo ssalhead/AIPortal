@@ -27,7 +27,7 @@
     "streaming-markdown": "^0.2.15",
     "tailwindcss": "^4.1.11",
     "uuid": "^11.1.0",
-    "zustand": "^5.0.7"
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",

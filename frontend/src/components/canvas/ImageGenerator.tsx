@@ -2,7 +2,7 @@
  * 이미지 생성 컴포넌트
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Image, 
   Wand2, 
@@ -13,16 +13,22 @@ import {
   AlertCircle
 } from 'lucide-react';
 import type { CanvasItem } from '../../types/canvas';
+import { useImageGenerationStore } from '../../stores/imageGenerationStore';
+import { useImageSessionStore } from '../../stores/imageSessionStore';
+import { useCanvasStore } from '../../stores/canvasStore';
+import ImageVersionGallery from './ImageVersionGallery';
 
 // 기존 Canvas 시스템용 인터페이스
 interface CanvasImageGeneratorProps {
   item: CanvasItem;
   onUpdate: (updates: Partial<CanvasItem>) => void;
+  conversationId?: string; // 진화형 시스템용
 }
 
 // 새로운 Workspace 시스템용 인터페이스  
 interface WorkspaceImageGeneratorProps {
   onImageGenerated: (imageData: string) => void;
+  conversationId: string; // 필수 필드
   readOnly?: boolean;
 }
 
@@ -57,12 +63,69 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
   const isCanvas = isCanvasProps(props);
   const readOnly = isCanvas ? false : props.readOnly || false;
   
-  const [prompt, setPrompt] = useState(isCanvas ? props.item.content.prompt || '' : '');
-  const [negativePrompt, setNegativePrompt] = useState(isCanvas ? props.item.content.negativePrompt || '' : '');
-  const [selectedStyle, setSelectedStyle] = useState(isCanvas ? props.item.content.style || 'realistic' : 'realistic');
-  const [selectedSize, setSelectedSize] = useState(isCanvas ? props.item.content.size || '1K_1:1' : '1K_1:1');
-  const [isGenerating, setIsGenerating] = useState(false);
+  // conversationId 추출 및 경로 추적
+  const conversationId = isCanvas 
+    ? props.conversationId 
+    : props.conversationId;
+    
+  // 🔍 conversationId 전달 경로 추적 로깅
+  console.log('🔍 [ROUTE] ImageGenerator conversationId 전달 경로:');
+  console.log('🔍 [ROUTE] - isCanvas:', isCanvas);
+  console.log('🔍 [ROUTE] - props.conversationId:', props.conversationId);
+  console.log('🔍 [ROUTE] - 최종 conversationId:', conversationId);
+  
+  // 진화형 이미지 세션 Store
+  const {
+    getSession,
+    hasSession,
+    createSession,
+    addVersion,
+    updateVersion,
+    selectVersion,
+    deleteVersion,
+    deleteAllVersions,
+    getSelectedVersion,
+    extractTheme,
+    evolvePrompt,
+  } = useImageSessionStore();
+  
+  // 현재 세션 정보
+  const session = conversationId ? getSession(conversationId) : null;
+  const selectedVersion = conversationId ? getSelectedVersion(conversationId) : null;
+  
+  const [prompt, setPrompt] = useState(
+    selectedVersion?.prompt || 
+    (isCanvas ? props.item.content.prompt || '' : '')
+  );
+  const [negativePrompt, setNegativePrompt] = useState(
+    selectedVersion?.negativePrompt || 
+    (isCanvas ? props.item.content.negativePrompt || '' : '')
+  );
+  const [selectedStyle, setSelectedStyle] = useState(
+    selectedVersion?.style || 
+    (isCanvas ? props.item.content.style || 'realistic' : 'realistic')
+  );
+  const [selectedSize, setSelectedSize] = useState(
+    selectedVersion?.size || 
+    (isCanvas ? props.item.content.size || '1K_1:1' : '1K_1:1')
+  );
+  // 글로벌 이미지 생성 상태 사용
+  const { 
+    isGenerating: globalIsGenerating, 
+    getJobByArtifactId,
+    startGeneration,
+    updateProgress,
+    completeGeneration,
+    failGeneration
+  } = useImageGenerationStore();
+  
+  // 로컬 상태 (글로벌 상태로 대체)
   const [generationHistory, setGenerationHistory] = useState<string[]>([]);
+  
+  // Canvas 모드에서 글로벌 상태 확인
+  const artifactId = isCanvas ? props.item.id : null;
+  const currentJob = artifactId ? getJobByArtifactId(artifactId) : null;
+  const isGenerating = currentJob ? currentJob.status === 'generating' : false;
 
   // Canvas 모드에서 전달된 이미지 정보 로깅
   if (isCanvas) {
@@ -108,11 +171,123 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
     throw new Error('이미지 생성 시간이 초과되었습니다.');
   };
   
-  // 이미지 생성 완료 처리
+  // 이미지 생성 완료 처리 - 진화형 시스템 통합
   const handleImageGenerated = (imageUrl: string) => {
     console.log('🖼️ 이미지 생성 완료:', imageUrl);
     console.log('🎨 Canvas 모드:', isCanvas);
+    console.log('🔄 세션 모드:', !!conversationId);
     
+    // === 🔍 강화된 상태 디버깅 로깅 ===
+    console.log('🔍 [DEBUG] handleImageGenerated 상태 점검:');
+    console.log('🔍 [DEBUG] - conversationId:', conversationId);
+    console.log('🔍 [DEBUG] - prompt:', prompt);
+    console.log('🔍 [DEBUG] - selectedStyle:', selectedStyle);
+    console.log('🔍 [DEBUG] - selectedSize:', selectedSize);
+    console.log('🔍 [DEBUG] - negativePrompt:', negativePrompt);
+    
+    // ImageSessionStore 전체 상태 확인
+    const { sessions } = useImageSessionStore.getState();
+    console.log('🔍 [DEBUG] ImageSessionStore 전체 세션 목록:');
+    sessions.forEach((session, id) => {
+      console.log(`🔍 [DEBUG] - 세션 ${id}: ${session.versions.length}개 버전`);
+    });
+    
+    // 1. 진화형 세션 시스템 업데이트
+    // 실시간으로 세션 재조회 (createSession 후에도 정확한 세션 정보 확보)
+    let currentSession = conversationId ? getSession(conversationId) : null;
+    console.log('🔍 [DEBUG] 실시간 세션 조회 결과:', currentSession ? {
+      id: currentSession.conversationId,
+      theme: currentSession.theme,
+      versionsCount: currentSession.versions.length,
+      selectedVersionId: currentSession.selectedVersionId
+    } : 'null');
+    
+    // 🛡️ 이중 안전장치: 세션이 없으면 즉석에서 생성
+    if (conversationId && !currentSession) {
+      console.log('🛡️ [SAFETY] 세션이 없어서 handleImageGenerated에서 즉석 생성');
+      const theme = extractTheme(prompt);
+      const emergencySession = createSession(conversationId, theme, prompt);
+      console.log('🛡️ [SAFETY] 응급 세션 생성 완료:', {
+        conversationId,
+        theme,
+        newSessionId: emergencySession.conversationId
+      });
+      
+      // 즉시 재조회하여 세션 존재 확인
+      currentSession = getSession(conversationId);
+      console.log('🛡️ [SAFETY] 응급 세션 생성 후 재조회:', currentSession ? 'success' : 'failed');
+    }
+    
+    if (conversationId && currentSession) {
+      console.log('🔍 [DEBUG] 버전 추가 실행 중...');
+      console.log('🔍 [DEBUG] 추가할 버전 데이터:', {
+        prompt,
+        negativePrompt,
+        style: selectedStyle,
+        size: selectedSize,
+        imageUrl,
+        status: 'completed'
+      });
+      
+      // 새 버전 추가
+      const newVersionId = addVersion(conversationId, {
+        prompt,
+        negativePrompt,
+        style: selectedStyle,
+        size: selectedSize,
+        imageUrl,
+        status: 'completed',
+      });
+      
+      console.log('🔍 [DEBUG] addVersion 호출 완료, 반환된 versionId:', newVersionId);
+      
+      // 추가 후 즉시 세션 상태 재확인
+      const updatedSession = getSession(conversationId);
+      console.log('🔍 [DEBUG] 버전 추가 후 세션 상태:', updatedSession ? {
+        versionsCount: updatedSession.versions.length,
+        selectedVersionId: updatedSession.selectedVersionId,
+        lastVersion: updatedSession.versions[updatedSession.versions.length - 1]
+      } : 'null');
+      
+      console.log('✨ 새 이미지 버전 추가됨:', {
+        conversationId,
+        versionId: newVersionId,
+        versionNumber: currentSession.versions.length + 1,
+      });
+      
+      // 버전 추가 후 Canvas Store와 동기화 (타이밍 최적화)
+      console.log('🔄 Canvas Store와 동기화 시작... (지연 실행으로 Zustand 업데이트 보장)');
+      
+      // ⚡ 타이밍 최적화: setTimeout으로 Zustand store 업데이트 완료 후 동기화
+      setTimeout(() => {
+        console.log('⚡ [TIMING] Canvas 동기화 실행 (Zustand 업데이트 완료 후)');
+        
+        // Canvas Store의 activateSessionCanvas를 다시 호출하여 새 버전 반영
+        const { activateSessionCanvas } = useCanvasStore.getState();
+        const updatedItemId = activateSessionCanvas(conversationId);
+        console.log('✅ Canvas Store 동기화 완료, 아이템 ID:', updatedItemId);
+        
+        // 동기화 완료 후 최종 상태 확인
+        const finalSession = getSession(conversationId);
+        console.log('⚡ [TIMING] 동기화 완료 후 최종 상태:', finalSession ? {
+          versionsCount: finalSession.versions.length,
+          selectedVersionId: finalSession.selectedVersionId
+        } : 'null');
+      }, 100); // 100ms 지연으로 React 상태 업데이트 사이클 고려
+    } else if (conversationId) {
+      console.error('❌ [ERROR] 세션이 없어 버전 추가 실패 - 이중 안전장치도 실패');
+      console.error('❌ [ERROR] - conversationId:', conversationId);
+      console.error('❌ [ERROR] - sessionExists:', !!currentSession);
+      console.error('❌ [ERROR] - ImageSessionStore 전체 상태:');
+      const { sessions } = useImageSessionStore.getState();
+      sessions.forEach((session, id) => {
+        console.error(`❌ [ERROR] - 세션 ${id}: ${session.versions.length}개 버전`);
+      });
+    } else {
+      console.warn('⚠️ [WARNING] conversationId가 없어서 세션 시스템을 사용하지 않습니다');
+    }
+    
+    // 2. 기존 Canvas 시스템 업데이트 (하위 호환성)
     if (isCanvas) {
       console.log('📝 Canvas 업데이트 중...');
       props.onUpdate({
@@ -141,7 +316,50 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
       return;
     }
     
-    setIsGenerating(true);
+    // 1. 진화형 세션 확인 및 생성 (세션이 없을 때만)
+    // 실시간으로 세션 조회 (최신 상태 반영)
+    const currentSessionForGenerate = conversationId ? getSession(conversationId) : null;
+    console.log('🔍 [DEBUG] handleGenerate 세션 생성 전 상태:');
+    console.log('🔍 [DEBUG] - conversationId:', conversationId);
+    console.log('🔍 [DEBUG] - currentSessionForGenerate:', currentSessionForGenerate ? 'exists' : 'null');
+    
+    if (conversationId && !currentSessionForGenerate) {
+      console.log('🔍 [DEBUG] 세션이 없어서 새로 생성합니다...');
+      
+      // 새 세션 생성
+      const theme = extractTheme(prompt);
+      console.log('🔍 [DEBUG] 추출된 테마:', theme);
+      
+      const newSession = createSession(conversationId, theme, prompt);
+      console.log('🎨 ImageGenerator - 새 이미지 세션 생성:', {
+        conversationId,
+        theme,
+        prompt,
+        새세션ID: newSession.conversationId
+      });
+      
+      // 생성 후 즉시 확인
+      const verifySession = getSession(conversationId);
+      console.log('🔍 [DEBUG] 세션 생성 후 즉시 확인:', verifySession ? {
+        id: verifySession.conversationId,
+        theme: verifySession.theme,
+        versionsCount: verifySession.versions.length
+      } : 'null');
+    } else if (conversationId && currentSessionForGenerate) {
+      console.log('🔄 ImageGenerator - 기존 이미지 세션 사용:', {
+        conversationId,
+        기존버전수: currentSessionForGenerate.versions.length,
+        선택된버전: currentSessionForGenerate.selectedVersionId
+      });
+    }
+    
+    // 🎨 글로벌 이미지 생성 상태 시작
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    if (artifactId) {
+      console.log('🎨 글로벌 이미지 생성 시작:', { jobId, artifactId, prompt });
+      startGeneration(jobId, artifactId, prompt, selectedStyle, selectedSize);
+    }
     
     // 상태 업데이트 (Canvas 전용)
     if (isCanvas) {
@@ -187,16 +405,41 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
       
       if (result.status === 'processing') {
         // 작업 상태를 주기적으로 확인
-        const jobId = result.job_id;
-        await pollJobStatus(jobId);
+        const apiJobId = result.job_id;
+        await pollJobStatus(apiJobId);
       } else if (result.status === 'completed' && result.images.length > 0) {
         const imageUrl = result.images[0];
+        
+        // 🎨 글로벌 상태 완료 처리
+        if (artifactId) {
+          completeGeneration(jobId, imageUrl);
+        }
+        
         handleImageGenerated(imageUrl);
       } else {
         throw new Error('이미지 생성에 실패했습니다.');
       }
     } catch (error) {
       console.error('Image generation failed:', error);
+      
+      // 🎨 글로벌 상태 실패 처리
+      if (artifactId) {
+        failGeneration(jobId, error instanceof Error ? error.message : '이미지 생성 실패');
+      }
+      
+      // 진화형 세션에서 실패 처리
+      const currentSessionForError = conversationId ? getSession(conversationId) : null;
+      if (conversationId && currentSessionForError) {
+        // 실패한 버전을 세션에 추가 (디버깅용)
+        addVersion(conversationId, {
+          prompt,
+          negativePrompt,
+          style: selectedStyle,
+          size: selectedSize,
+          imageUrl: '',
+          status: 'failed',
+        });
+      }
       
       if (isCanvas) {
         props.onUpdate({
@@ -207,8 +450,6 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
           }
         });
       }
-    } finally {
-      setIsGenerating(false);
     }
   };
   
@@ -228,9 +469,9 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
   };
   
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 p-4 gap-4">
-      {/* 상단 이미지 미리보기 영역 */}
-      <div className="flex-1 bg-white dark:bg-slate-800 rounded-xl shadow-lg overflow-hidden">
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 p-4 gap-3">
+      {/* 상단 이미지 미리보기 영역 - 나머지 높이를 동적으로 차지 */}
+      <div className="flex-1 min-h-0 bg-white dark:bg-slate-800 rounded-xl shadow-lg overflow-hidden">
         {/* 미리보기 헤더 */}
         <div className="border-b border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center justify-between">
@@ -350,8 +591,77 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
         </div>
       </div>
       
-      {/* 하단 설정 패널 */}
-      <div className="h-52 bg-white dark:bg-slate-800 rounded-xl shadow-lg flex flex-col">
+      {/* 중간 버전 히스토리 영역 - 고정 높이 */}
+      {conversationId && session && session.versions.length > 0 && (
+        <div className="h-32 bg-white dark:bg-slate-800 rounded-xl shadow-lg p-3">
+          <ImageVersionGallery
+            conversationId={conversationId}
+            versions={session.versions}
+            selectedVersionId={session.selectedVersionId}
+            onVersionSelect={(versionId) => {
+              selectVersion(conversationId, versionId);
+              const selectedVer = session.versions.find(v => v.id === versionId);
+              if (selectedVer) {
+                setPrompt(selectedVer.prompt);
+                setNegativePrompt(selectedVer.negativePrompt);
+                setSelectedStyle(selectedVer.style);
+                setSelectedSize(selectedVer.size);
+                
+                // Canvas 아이템도 업데이트 (Canvas 모드인 경우)
+                if (isCanvas) {
+                  props.onUpdate({
+                    content: {
+                      ...props.item.content,
+                      prompt: selectedVer.prompt,
+                      negativePrompt: selectedVer.negativePrompt,
+                      style: selectedVer.style,
+                      size: selectedVer.size,
+                      imageUrl: selectedVer.imageUrl,
+                      status: selectedVer.status,
+                    }
+                  });
+                }
+              }
+            }}
+            onVersionDelete={(versionId) => {
+              deleteVersion(conversationId, versionId);
+              // 삭제 후 선택된 버전이 변경되었으면 UI 업데이트
+              const newSelectedVersion = getSelectedVersion(conversationId);
+              if (newSelectedVersion) {
+                setPrompt(newSelectedVersion.prompt);
+                setNegativePrompt(newSelectedVersion.negativePrompt);
+                setSelectedStyle(newSelectedVersion.style);
+                setSelectedSize(newSelectedVersion.size);
+              }
+            }}
+            onDeleteAll={() => {
+              deleteAllVersions(conversationId);
+              // 모든 이미지 삭제 후 기본값으로 리셋
+              setPrompt('');
+              setNegativePrompt('');
+              setSelectedStyle('realistic');
+              setSelectedSize('1K_1:1');
+              
+              if (isCanvas) {
+                props.onUpdate({
+                  content: {
+                    ...props.item.content,
+                    prompt: '',
+                    negativePrompt: '',
+                    style: 'realistic',
+                    size: '1K_1:1',
+                    imageUrl: '',
+                    status: 'idle',
+                  }
+                });
+              }
+            }}
+          />
+        </div>
+      )}
+      
+      {/* 하단 설정 패널 - 고정 높이 */}
+      <div className="h-48 bg-white dark:bg-slate-800 rounded-xl shadow-lg flex flex-col">
         {/* 설정 헤더 */}
         <div className="border-b border-slate-200 dark:border-slate-700 p-3">
           <h3 className="font-semibold text-slate-900 dark:text-slate-100 text-sm">
@@ -360,8 +670,8 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
         </div>
         
         {/* 설정 폼 */}
-        <div className="flex-1 p-4">
-          <div className="grid grid-cols-3 gap-4 h-full">
+        <div className="flex-1 p-3">
+          <div className="grid grid-cols-3 gap-3 h-full">
             {/* 프롬프트 영역 (상하 배치) */}
             <div className="col-span-2 flex flex-col gap-2">
               {/* 프롬프트 입력 */}
@@ -369,12 +679,12 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                 <label className="block text-xs font-medium text-slate-900 dark:text-slate-200 mb-1">
                   프롬프트
                 </label>
-                <div className="relative h-12">
+                <div className="relative h-10">
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="생성하고 싶은 이미지를 자세히 설명해주세요..."
-                    className="w-full h-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
+                    className="w-full h-full px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
                     disabled={isGenerating}
                   />
                   <button
@@ -396,14 +706,14 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                   value={negativePrompt}
                   onChange={(e) => setNegativePrompt(e.target.value)}
                   placeholder="제외하고 싶은 요소..."
-                  className="w-full h-12 px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
+                  className="w-full h-10 px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
                   disabled={isGenerating}
                 />
               </div>
             </div>
             
             {/* 설정 및 버튼 */}
-            <div className="col-span-1 flex flex-col gap-2">
+            <div className="col-span-1 flex flex-col gap-1.5">
               {/* 스타일 선택 */}
               <div>
                 <label className="block text-xs font-medium text-slate-900 dark:text-slate-200 mb-1">
@@ -413,7 +723,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                   value={selectedStyle}
                   onChange={(e) => setSelectedStyle(e.target.value)}
                   disabled={isGenerating}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm text-slate-900 dark:text-slate-100"
+                  className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-xs text-slate-900 dark:text-slate-100"
                 >
                   {STYLE_PRESETS.map((style) => (
                     <option key={style.id} value={style.id}>
@@ -432,7 +742,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                   value={selectedSize}
                   onChange={(e) => setSelectedSize(e.target.value)}
                   disabled={isGenerating}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm text-slate-900 dark:text-slate-100"
+                  className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-xs text-slate-900 dark:text-slate-100"
                 >
                   {SIZE_OPTIONS.map((size) => (
                     <option key={size.id} value={size.id}>
@@ -447,7 +757,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                 onClick={handleGenerate}
                 disabled={isGenerating || !prompt.trim()}
                 className={`
-                  flex-1 px-4 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm mt-1
+                  px-3 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 text-xs mt-1
                   ${isGenerating
                     ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
                     : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600'
@@ -456,12 +766,12 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
               >
                 {isGenerating ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-3 h-3 animate-spin" />
                     <span>생성 중</span>
                   </>
                 ) : (
                   <>
-                    <Wand2 className="w-4 h-4" />
+                    <Wand2 className="w-3 h-3" />
                     <span>이미지 생성</span>
                   </>
                 )}
@@ -471,7 +781,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
               {(isCanvas && props.item.content.imageUrl) && (
                 <button
                   onClick={handleDownload}
-                  className="w-full px-4 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center gap-2 text-xs"
+                  className="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center justify-center gap-1.5 text-xs"
                 >
                   <Download className="w-3 h-3" />
                   <span>다운로드</span>

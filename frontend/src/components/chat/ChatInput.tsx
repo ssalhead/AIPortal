@@ -9,6 +9,7 @@ import { useLoading } from '../../contexts/LoadingContext';
 import { useResponsive } from '../../hooks/useResponsive';
 import { Send, Paperclip, ChevronDown, Star, Zap, X } from '../ui/Icons';
 import { fileService } from '../../services/fileService';
+import { useCanvasStore } from '../../stores/canvasStore';
 
 interface ChatInputProps {
   onSendMessage: (message: string, model: LLMModel, agentType: AgentType) => void;
@@ -41,6 +42,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Canvas Store 함수들
+  const { autoActivateCanvas } = useCanvasStore();
+  
+  // 이미지 생성 키워드 감지 함수
+  const detectImageKeywords = (text: string): boolean => {
+    const imageKeywords = [
+      '그려', '그림', '이미지', '사진', '그리기', 'draw', 'image', 'generate',
+      '생성', '만들', '작성', '디자인', '일러스트', '스케치', '포스터', '로고'
+    ];
+    
+    const lowerText = text.toLowerCase();
+    return imageKeywords.some(keyword => lowerText.includes(keyword));
+  };
+  
   
   // 모바일용 플레이스홀더
   const mobilePlaceholder = isMobile ? "메시지 입력..." : placeholder;
@@ -138,6 +154,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           console.error('파일 업로드 실패:', error);
           alert('파일 업로드에 실패했습니다.');
           return;
+        }
+      }
+      
+      // 🎨 이미지 키워드 감지 및 Canvas 에이전트 자동 전환 (Canvas는 AI 응답 후 열림)
+      if (detectImageKeywords(messageToSend)) {
+        console.log('🎨 이미지 생성 요청 감지:', messageToSend);
+        
+        // Canvas 에이전트로 자동 전환 (Canvas는 나중에 열림)
+        if (selectedAgent !== 'canvas') {
+          console.log('🎨 Canvas 에이전트로 자동 전환');
+          onAgentChange('canvas');
         }
       }
       

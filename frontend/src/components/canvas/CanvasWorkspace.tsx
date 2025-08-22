@@ -42,7 +42,11 @@ const TOOL_NAMES: Record<CanvasToolType, string> = {
   chart: '차트'
 };
 
-export const CanvasWorkspace: React.FC = () => {
+interface CanvasWorkspaceProps {
+  conversationId?: string | null;
+}
+
+export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId }) => {
   const {
     items,
     activeItemId,
@@ -146,6 +150,7 @@ export const CanvasWorkspace: React.FC = () => {
               <ImageGenerator
                 item={activeItem}
                 onUpdate={(updates) => updateItem(activeItem.id, updates)}
+                conversationId={conversationId}
               />
             )}
             {activeItem.type === 'mindmap' && (

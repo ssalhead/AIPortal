@@ -257,7 +257,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ### 최신 완료 사항 (2025-08-22)
 
-#### 🎨 **Canvas 이미지 생성 시스템 완전 자동화 완성**
+#### 🎨 **Canvas 이미지 생성 및 세션 동기화 시스템 완전 완성**
 
 **✅ Canvas Store 이미지 URL 추출 로직 개선:**
 1. **canvasStore.ts**: `autoActivateCanvas` 함수에서 이미지 URL 추출 개선
@@ -269,6 +269,31 @@ Co-Authored-By: Claude <noreply@anthropic.com>
    - 이미지 URL 추출 과정 추적
    - URL 소스 식별 (image_urls/images/generation_result)
    - 실패 시 명확한 경고 메시지
+
+**✅ Canvas 세션 동기화 문제 완전 해결:**
+1. **conversationId 전달 문제 해결**:
+   - ChatMessage.tsx의 `handleOpenCanvas`에서 `conversationId` 파라미터 누락 수정
+   - `autoActivateCanvas(canvasData, conversationId)` 호출로 변경
+
+2. **Canvas Store와 ImageSessionStore 간 동기화 구현**:
+   - `autoActivateCanvas` 함수에서 `canvasData`로부터 이미지 정보 추출
+   - ImageSessionStore에 세션/버전 자동 생성
+   - `activateSessionCanvas` 호출 전 버전 데이터 사전 준비
+
+3. **Multi-Layer Defense 디버깅 시스템 구축**:
+   - 3단계 강화된 로깅 시스템 구현
+   - `handleImageGenerated`에서 이중 안전장치 구현
+   - Canvas 동기화 타이밍 최적화 (setTimeout 100ms)
+
+**✅ 인라인 링크 중복 버전 생성 방지:**
+1. **중복 방지 로직 구현**:
+   - 동일한 `imageUrl`을 가진 버전 존재 여부 확인
+   - 기존 버전 발견 시 새 버전 추가 대신 기존 버전 선택
+
+2. **삭제된 버전 자동 복원 방지**:
+   - 사용자가 의도적으로 삭제한 버전은 미리보기 전용 모드로 처리
+   - 버전 히스토리에 자동 추가하지 않음
+   - 임시 Canvas 아이템 생성으로 이미지 확인 가능
 
 **✅ 인라인 링크 버튼 영구 표시 문제 해결:**
 1. **히스토리 로딩 Canvas 데이터 누락 문제 발견**:
@@ -293,16 +318,26 @@ Imagen 4 API 호출 및 실제 이미지 생성 ✅
      ↓
 Canvas Store에서 이미지 URL 자동 추출 ✅ (문자열 배열 지원)
      ↓
-Canvas 워크스페이스에 이미지 즉시 표시 ✅
+ImageSessionStore에 세션/버전 자동 생성 ✅
+     ↓
+Canvas 워크스페이스에 이미지 및 버전 히스토리 표시 ✅
      ↓
 Canvas 데이터 데이터베이스 저장 ✅
      ↓
 "🎨 Canvas에서 보기" 인라인 링크 버튼 표시 ✅
      ↓
 브라우저 새로고침 시 인라인 버튼 영구 보존 ✅
+     ↓
+인라인 링크 클릭 시 중복 버전 생성 방지 ✅
+     ↓
+삭제된 버전 자동 복원 방지 (미리보기 모드) ✅
 ```
 
 #### 🔧 **기술적 문제 해결 세부사항**
+
+**Canvas 세션 동기화 문제:**
+- **원인**: `autoActivateCanvas`에서 `conversationId` 누락으로 Canvas Store와 ImageSessionStore 간 동기화 실패
+- **해결**: ChatMessage에서 `conversationId` 전달 및 Canvas Store에서 이미지 정보 추출하여 ImageSessionStore 연동
 
 **이미지 자동 생성 문제:**
 - **원인**: Canvas Store에서 백엔드 `images: ["url"]` 배열을 `images[0].url`로 접근 실패
@@ -311,6 +346,14 @@ Canvas 데이터 데이터베이스 저장 ✅
 **인라인 버튼 영구 표시 문제:**
 - **원인**: 히스토리 클릭 시 Canvas 데이터 변환 로직 누락
 - **해결**: 히스토리 핸들러에 `canvasData` 필드 추가 및 변환 로직 통합
+
+**중복 버전 생성 문제:**
+- **원인**: 인라인 링크 클릭 시마다 동일한 이미지에 대해 새 버전 생성
+- **해결**: 이미지 URL 기반 중복 검사 및 기존 버전 선택 로직 구현
+
+**삭제된 버전 자동 복원 문제:**
+- **원인**: 사용자 의도적 삭제 후에도 인라인 링크 클릭 시 버전 히스토리에 재추가
+- **해결**: 미리보기 전용 모드 구현 (임시 Canvas 아이템 생성, 히스토리 추가 안함)
 
 ### 이전 완료 사항 (2025-08-21)
 

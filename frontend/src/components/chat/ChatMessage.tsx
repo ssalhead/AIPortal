@@ -124,7 +124,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const handleOpenCanvas = () => {
     if (canvasData) {
       console.log('🎨 Artifact 버튼 클릭 - Canvas 데이터:', canvasData);
-      const artifactId = autoActivateCanvas(canvasData);
+      console.log('🎨 Artifact 버튼 클릭 - conversationId:', conversationId);
+      const artifactId = autoActivateCanvas(canvasData, conversationId);
       console.log('🎨 Canvas 활성화 완료 - Artifact ID:', artifactId);
     }
   };

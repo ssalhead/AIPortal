@@ -179,14 +179,55 @@ async def send_message_stream(
     
     async def generate():
         try:
+            # 🎨 진행 상태를 스트림에 추가하기 위한 큐
+            progress_queue = asyncio.Queue()
+            
+            # 🎨 진행 상태 콜백 함수 (Canvas 에이전트용)
+            async def progress_callback(progress_data):
+                """Canvas 에이전트의 진행 상태를 큐에 추가"""
+                progress_event = {
+                    "type": "progress",
+                    "data": {
+                        "step": progress_data.get("step", "processing"),
+                        "message": progress_data.get("message", "처리 중..."),
+                        "progress": progress_data.get("progress", 0),
+                        "timestamp": now_kst().isoformat()
+                    }
+                }
+                logger.info(f"🎨 Canvas 진행상태 큐 추가: {progress_event}")
+                await progress_queue.put(progress_event)
+            
+            # 프로그레스 이벤트를 먼저 전송하는 태스크
+            async def send_progress_events():
+                while True:
+                    try:
+                        # 0.1초 대기로 진행 상태 이벤트 확인
+                        progress_event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                        yield f"data: {json.dumps(progress_event)}\n\n"
+                    except asyncio.TimeoutError:
+                        break
+            
+            # 🎨 진행 상태 이벤트 먼저 전송
+            async for progress_data in send_progress_events():
+                yield progress_data
+            
             # 새로운 execute_chat_stream 메서드로 대화 컨텍스트 지원 스트리밍
             async for event in agent_service.execute_chat_stream(
                 message=chat_message.message,
                 model=chat_message.model,
                 agent_type=chat_message.agent_type,
                 user_id=user_id,
-                session_id=chat_message.session_id
+                session_id=chat_message.session_id,
+                progress_callback=progress_callback  # 🎨 Canvas 진행 상태 콜백 추가
             ):
+                # 스트리밍 중간에도 진행 상태 이벤트 확인
+                try:
+                    while True:
+                        progress_event = progress_queue.get_nowait()
+                        yield f"data: {json.dumps(progress_event)}\n\n"
+                except asyncio.QueueEmpty:
+                    pass
+                
                 # 이벤트를 JSON으로 직렬화하여 SSE 형태로 전송
                 yield f"data: {json.dumps(event)}\n\n"
                 
