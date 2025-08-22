@@ -38,6 +38,7 @@ class Conversation(Base):
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
     feedbacks = relationship("MessageFeedback", back_populates="conversation", cascade="all, delete-orphan")
+    summaries = relationship("ConversationSummary", back_populates="conversation", cascade="all, delete-orphan")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -61,3 +62,27 @@ class Message(Base):
     updated_at = Column(DateTime, default=now_kst, onupdate=now_kst)
     
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class ConversationSummary(Base):
+    __tablename__ = "conversation_summaries"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    
+    summary_text = Column(Text, nullable=False)
+    summary_type = Column(String(50), default="auto")  # auto, manual, periodic
+    
+    messages_count = Column(Integer, default=0)
+    tokens_used = Column(Integer, default=0)
+    
+    metadata_ = Column(JSON, default=dict)
+    
+    created_at = Column(DateTime, default=now_kst)
+    updated_at = Column(DateTime, default=now_kst, onupdate=now_kst)
+    
+    conversation = relationship("Conversation", back_populates="summaries")
+
+
+# Conversation 모델에 summaries 관계 추가를 위해 기존 관계 확장이 필요하지만,
+# 순환 import를 피하기 위해 relationship을 나중에 추가하도록 설계

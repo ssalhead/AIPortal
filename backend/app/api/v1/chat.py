@@ -8,11 +8,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import asyncio
-import logging
 from app.utils.timezone import now_kst
+from app.utils.logger import get_logger
 # from asyncio import Queue  # 더 이상 사용하지 않음
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 from app.api.deps import get_current_active_user
 from app.models.citation import CitedResponse
@@ -45,6 +45,8 @@ class ChatResponse(BaseModel):
     citation_stats: Optional[Dict[str, Any]] = None
     # 메타데이터 추가 (맥락 통합 정보 포함)
     metadata: Optional[Dict[str, Any]] = None
+    # Canvas 데이터 추가 (이미지 생성, 마인드맵 등)
+    canvas_data: Optional[Dict[str, Any]] = None
 
 
 @router.post("/", response_model=ChatResponse)
@@ -144,7 +146,8 @@ async def send_message(
         citations=citations or [],
         sources=(sources or [])[:chat_message.max_sources],  # 최대 출처 개수 제한
         citation_stats=citation_stats,
-        metadata=result.get("metadata")  # 메타데이터 포함 (맥락 통합 정보)
+        metadata=result.get("metadata"),  # 메타데이터 포함 (맥락 통합 정보)
+        canvas_data=result.get("canvas_data")  # Canvas 데이터 포함 (이미지 생성, 마인드맵 등)
     )
 
 
@@ -243,9 +246,13 @@ async def get_chat_history(
             if conversation_detail and conversation_detail.get('messages'):
                 # 디버깅: API 응답 데이터 확인
                 messages = conversation_detail['messages']
-                logger.info(f"API 응답 메시지 샘플 (총 {len(messages)}개):")
+                logger.debug("메시지 샘플", {"count": len(messages)})
                 for i, msg in enumerate(messages[:2]):  # 처음 2개만 로깅
-                    logger.info(f"  메시지 {i+1}: role='{msg.get('role')}' (타입: {type(msg.get('role'))}) content='{msg.get('content', '')[:30]}...'")
+                    logger.debug(f"메시지 {i+1}", {
+                        "role": msg.get('role'),
+                        "role_type": type(msg.get('role')),
+                        "content_preview": msg.get('content', '')[:30] + '...'
+                    })
                 return messages
             return []
         else:

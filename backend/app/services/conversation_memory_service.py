@@ -12,8 +12,10 @@ from datetime import datetime, timedelta
 import json
 
 from app.db.session import AsyncSessionLocal
+from app.db.models import ConversationSummary
 from app.services.conversation_history_service import conversation_history_service
 from app.agents.llm_router import llm_router
+from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +162,43 @@ class ConversationMemoryService:
         """장기메모리 요약 조회 또는 생성"""
         
         try:
-            # TODO: conversation_summaries 테이블에서 기존 요약 조회
-            # 현재는 매번 새로 생성
+            # conversation_summaries 테이블에서 기존 요약 조회
+            async with AsyncSessionLocal() as session:
+                existing_summary = await session.execute(
+                    select(ConversationSummary)
+                    .where(ConversationSummary.conversation_id == conversation_id)
+                    .order_by(ConversationSummary.updated_at.desc())
+                )
+                existing_record = existing_summary.scalar_one_or_none()
+                
+                # 기존 요약이 있고, 메시지 개수가 크게 변하지 않았으면 재사용
+                current_message_count = len(qa_pairs)
+                if existing_record and abs(existing_record.messages_count - current_message_count) <= 2:
+                    logger.info(f"기존 요약 재사용: {conversation_id}")
+                    return existing_record.summary_text
+            
+            # 새로운 요약 생성
             summary = await self._generate_summary(qa_pairs)
             
-            # TODO: 생성된 요약을 데이터베이스에 저장
+            # 생성된 요약을 데이터베이스에 저장
+            async with AsyncSessionLocal() as session:
+                # 기존 요약이 있다면 업데이트, 없다면 생성
+                if existing_record:
+                    existing_record.summary_text = summary
+                    existing_record.messages_count = len(qa_pairs)
+                    existing_record.updated_at = datetime.utcnow()
+                    await session.merge(existing_record)
+                else:
+                    new_summary = ConversationSummary(
+                        conversation_id=conversation_id,
+                        summary_text=summary,
+                        summary_type="auto",
+                        messages_count=len(qa_pairs)
+                    )
+                    session.add(new_summary)
+                
+                await session.commit()
+            
             logger.info(f"대화 {conversation_id} 요약 생성 완료 (길이: {len(summary)})")
             
             return summary
@@ -309,9 +343,28 @@ class ConversationMemoryService:
         return len(qa_pairs) > self.short_term_limit
     
     async def cleanup_old_summaries(self, days_old: int = 30):
-        """오래된 요약 정리 (향후 구현)"""
-        # TODO: conversation_summaries 테이블에서 오래된 요약 삭제
-        pass
+        """오래된 요약 정리"""
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+            
+            async with AsyncSessionLocal() as session:
+                # 비활성 대화의 오래된 요약 삭제
+                old_summaries = await session.execute(
+                    select(ConversationSummary)
+                    .where(ConversationSummary.updated_at < cutoff_date)
+                )
+                summaries_to_delete = old_summaries.scalars().all()
+                
+                deleted_count = 0
+                for summary in summaries_to_delete:
+                    await session.delete(summary)
+                    deleted_count += 1
+                
+                await session.commit()
+                logger.info(f"오래된 요약 {deleted_count}개 정리 완료")
+                
+        except Exception as e:
+            logger.error(f"요약 정리 실패: {e}")
 
 
 # 서비스 인스턴스

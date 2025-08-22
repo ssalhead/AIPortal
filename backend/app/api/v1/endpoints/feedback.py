@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
 from app.api.deps import get_db, get_current_user
+from app.api.deps import get_current_admin_user
 from app.services.feedback_service import feedback_service
 from app.db.models.user import User
 
@@ -174,11 +175,11 @@ async def get_recent_feedbacks(
     hours: int = Query(24, ge=1, le=168, description="조회 기간 (시간)"),
     priority_only: bool = Query(False, description="우선순위 높은 피드백만"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_admin: User = Depends(get_current_admin_user)
 ):
     """최근 피드백 조회 (관리자용)"""
     try:
-        # TODO: 관리자 권한 확인 추가
+        # 관리자 권한 확인 완료
         feedbacks = await feedback_service.get_recent_feedbacks(
             session=db,
             limit=limit,
@@ -203,11 +204,11 @@ async def get_recent_feedbacks(
 async def generate_daily_analytics(
     date: Optional[str] = Query(None, description="분석할 날짜 (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_admin: User = Depends(get_current_admin_user)
 ):
     """일간 분석 데이터 생성 (관리자용)"""
     try:
-        # TODO: 관리자 권한 확인 추가
+        # 관리자 권한 확인 완료
         
         target_date = None
         if date:

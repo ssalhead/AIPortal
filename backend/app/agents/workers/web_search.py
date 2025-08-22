@@ -8,7 +8,6 @@ import httpx
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import quote_plus, urlparse
 import json
-import logging
 import re
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +19,9 @@ from app.agents.llm_router import llm_router
 from app.services.search_service import search_service
 from app.services.web_crawler import web_crawler
 from app.db.session import AsyncSessionLocal
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -335,7 +335,7 @@ class WebSearchAgent(BaseAgent):
             
             # 범용 대화 맥락 기반 검색 컨텍스트 생성
             conversation_context_prompt = ""
-            logger.info(f"🎯 대화 맥락 수신 여부: {conversation_context is not None}")
+            logger.debug("대화 맥락 수신 여부", {"has_context": conversation_context is not None})
             if conversation_context:
                 logger.info(f"🎯 대화 맥락 정보 - 도메인: {conversation_context.domain}, 최적 검색어: {conversation_context.optimal_search_queries}")
                 

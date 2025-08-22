@@ -9,12 +9,14 @@ import { SourceList } from '../citation/SourceList';
 import { SearchResultsCard } from '../search/SearchResultsCard';
 import { SearchProgressIndicator, type SearchStep } from '../SearchProcess/SearchProgressIndicator';
 import type { SearchResult } from '../search/SearchResultsCard';
-import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from 'lucide-react';
+import { Copy, ThumbsUp, ThumbsDown, RotateCcw, User, Bot, Star, Zap, Search, Loader2 } from '../ui/Icons';
 import { ProgressiveMarkdown, type ProgressiveMarkdownRef } from '../ui/ProgressiveMarkdown';
-import type { Citation as CitationData, Source as SourceData } from '../../types';
+import type { Citation as CitationData, Source as SourceData, CanvasData } from '../../types';
 import { feedbackService } from '../../services/feedbackService';
 import { useResponsive } from '../../hooks/useResponsive';
 import type { MessageFeedback } from '../../types/feedback';
+import { loggers } from '../../utils/logger';
+import { useCanvasStore } from '../../stores/canvasStore';
 
 interface ChatMessageProps {
   message: string;
@@ -62,6 +64,8 @@ interface ChatMessageProps {
   streamingChunk?: string;
   /** 스트리밍 모드 여부 */
   isStreamingMode?: boolean;
+  /** Canvas 데이터 (Artifact 링크용) */
+  canvasData?: CanvasData;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -88,11 +92,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   customTypingMessage,
   streamingChunk,
   isStreamingMode = false,
+  canvasData,
 }) => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [rating, setRating] = useState<'up' | 'down' | null>(null);
   const [feedback, setFeedback] = useState<MessageFeedback | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  
+  // Canvas Store 함수들
+  const { autoActivateCanvas, openWithArtifact } = useCanvasStore();
   
   // ProgressiveMarkdown ref
   const progressiveMarkdownRef = useRef<ProgressiveMarkdownRef>(null);
@@ -111,6 +119,27 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       console.error('복사 실패:', err);
     }
   };
+
+  // Canvas Artifact 열기 핸들러
+  const handleOpenCanvas = () => {
+    if (canvasData) {
+      console.log('🎨 Artifact 버튼 클릭 - Canvas 데이터:', canvasData);
+      const artifactId = autoActivateCanvas(canvasData);
+      console.log('🎨 Canvas 활성화 완료 - Artifact ID:', artifactId);
+    }
+  };
+  
+  // Canvas 데이터 변경 감지 (디버깅용 - 강화)
+  useEffect(() => {
+    if (!isUser) {
+      if (canvasData) {
+        console.log(`🎨 ChatMessage Canvas 데이터 수신 - 메시지 ID: ${messageId}, 타입: ${canvasData.type}`, canvasData);
+        console.log(`✅ 인라인 링크 버튼이 표시됩니다.`);
+      } else {
+        console.log(`❌ ChatMessage Canvas 데이터 없음 - 메시지 ID: ${messageId}, 인라인 버튼이 표시되지 않습니다.`);
+      }
+    }
+  }, [canvasData, messageId, isUser]);
 
   // 기존 피드백 로드
   useEffect(() => {
@@ -136,10 +165,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       const newChunk = streamingChunk.slice(previousLength);
       
       if (newChunk.length > 0) {
-        console.log('📡 스트리밍 청크 처리:', {
-          새청크: newChunk.length + '자',
-          누적: streamingChunk.length + '자'
-        });
+        loggers.stream('스트리밍 청크 처리', {
+          newChunkLength: newChunk.length,
+          totalLength: streamingChunk.length
+        }, 'ChatMessage');
         
         progressiveMarkdownRef.current.appendChunk(streamingChunk); // 전체 누적 텍스트 전달
         lastChunkRef.current = streamingChunk;
@@ -160,18 +189,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
   // 스트리밍 완료 처리
   useEffect(() => {
-    console.log('🔄 스트리밍 모드 변경 감지:', { 
+    loggers.debug('스트리밍 모드 변경 감지', { 
       isStreamingMode, 
       hasRef: !!progressiveMarkdownRef.current, 
       hasLastChunk: !!lastChunkRef.current 
-    });
+    }, 'ChatMessage');
     
     if (!isStreamingMode && progressiveMarkdownRef.current && lastChunkRef.current) {
-      console.log('🏁 스트리밍 완료 - endStreaming() 호출');
+      loggers.info('스트리밍 완료 - endStreaming() 호출', 'ChatMessage');
       progressiveMarkdownRef.current.endStreaming();
       lastChunkRef.current = '';
     } else if (!isStreamingMode) {
-      console.log('⚠️ endStreaming 호출되지 않음 - 조건 미충족');
+      loggers.debug('endStreaming 호출되지 않음 - 조건 미충족', undefined, 'ChatMessage');
     }
   }, [isStreamingMode]);
 
@@ -515,6 +544,50 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             </div>
           )}
           
+          {/* Canvas Artifact 버튼 (AI 응답에 canvas_data가 있을 때) */}
+          {!isUser && canvasData && (
+            <div className="mt-3 ml-1">
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/30 border border-purple-200 dark:border-purple-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer group/artifact" onClick={handleOpenCanvas}>
+                <div className="flex items-center gap-2">
+                  {/* Canvas 타입별 아이콘 */}
+                  <div className="p-1.5 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
+                    {canvasData.type === 'image' ? (
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                      </svg>
+                    ) : canvasData.type === 'mindmap' ? (
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2v4m0 4v4m0 4v4M4 12h4m4 0h4m4 0h4" />
+                        <circle cx="12" cy="12" r="2" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <path d="M9 12l2 2 4-4" />
+                      </svg>
+                    )}
+                  </div>
+                  
+                  {/* Canvas 정보 */}
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                      {canvasData.title || `Canvas ${canvasData.type === 'image' ? '이미지' : canvasData.type === 'mindmap' ? '마인드맵' : '작업'}`}
+                    </span>
+                    <span className="text-xs text-purple-600 dark:text-purple-400">
+                      클릭하여 Canvas에서 보기
+                    </span>
+                  </div>
+                </div>
+                
+                {/* 열기 아이콘 */}
+                <svg className="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover/artifact:translate-x-0.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </div>
+            </div>
+          )}
 
           {/* 출처 및 추가 정보 (AI 응답에만, 웹 검색 아닌 경우) */}
           {!isUser && agentType !== 'web_search' && sources.length > 0 && (

@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
     
+    # 디버그 로깅 설정 (환경변수로 제어)
+    DEBUG_PERFORMANCE: bool = False
+    DEBUG_STREAMING: bool = False
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

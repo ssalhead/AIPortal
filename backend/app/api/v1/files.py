@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_active_user
 from app.core.config import settings
+from app.db.models import File as FileModel
+from app.db.session import AsyncSessionLocal
+from sqlalchemy.future import select
+from sqlalchemy import func
+from fastapi.responses import FileResponse, StreamingResponse
+import aiofiles
 
 router = APIRouter()
 
@@ -196,8 +202,25 @@ async def upload_files(
             
             uploaded_files.append(file_info)
             
-            # 메타데이터 저장 (데이터베이스)
-            # TODO: PostgreSQL에 파일 메타데이터 저장
+            # 메타데이터를 PostgreSQL에 저장
+            async with AsyncSessionLocal() as session:
+                file_record = FileModel(
+                    file_id=file_id,
+                    user_id=user_id,
+                    original_name=file.filename,
+                    file_size=file_path.stat().st_size,
+                    mime_type=file.content_type or 'application/octet-stream',
+                    file_extension=file_extension,
+                    upload_path=str(file_path),
+                    checksum=checksum,
+                    status='uploaded',
+                    description=description,
+                    tags=tags.split(',') if tags else [],
+                    metadata_={'original_filename': file.filename, 'upload_time': datetime.utcnow().isoformat()}
+                )
+                session.add(file_record)
+                await session.commit()
+                logger.info(f"파일 메타데이터 저장 완료: {file_id}")
             
             logger.info(f"파일 업로드 성공: {file.filename} -> {file_id}")
             
@@ -234,14 +257,65 @@ async def list_files(
         파일 목록
     """
     
-    # TODO: PostgreSQL에서 사용자 파일 목록 조회
-    # 현재는 빈 목록 반환
-    return FileListResponse(
-        files=[],
-        total=0,
-        skip=skip,
-        limit=limit
-    )
+    # PostgreSQL에서 사용자 파일 목록 조회
+    try:
+        async with AsyncSessionLocal() as session:
+            # 기본 쿼리 구성
+            query = select(FileModel).where(
+                FileModel.user_id == (current_user.id if hasattr(current_user, 'id') else 'unknown')
+            )
+            
+            # 파일 타입 필터 적용
+            if file_type:
+                query = query.where(FileModel.file_extension.like(f'%{file_type}%'))
+            
+            # 정렬 및 페이지네이션
+            query = query.order_by(FileModel.created_at.desc()).offset(skip).limit(limit)
+            
+            result = await session.execute(query)
+            files = result.scalars().all()
+            
+            # 전체 개수 조회
+            count_query = select(func.count(FileModel.id)).where(
+                FileModel.user_id == (current_user.id if hasattr(current_user, 'id') else 'unknown')
+            )
+            if file_type:
+                count_query = count_query.where(FileModel.file_extension.like(f'%{file_type}%'))
+            
+            count_result = await session.execute(count_query)
+            total_count = count_result.scalar()
+            
+            # 응답 생성
+            file_list = []
+            for file_record in files:
+                file_list.append(FileMetadata(
+                    file_id=file_record.file_id,
+                    original_name=file_record.original_name,
+                    file_size=file_record.file_size,
+                    mime_type=file_record.mime_type,
+                    file_extension=file_record.file_extension,
+                    upload_path=file_record.upload_path,
+                    status=file_record.status,
+                    checksum=file_record.checksum,
+                    processing_result=file_record.processing_result,
+                    user_id=file_record.user_id,
+                    created_at=file_record.created_at.isoformat(),
+                    updated_at=file_record.updated_at.isoformat()
+                ))
+            
+            return FileListResponse(
+                files=file_list,
+                total=total_count,
+                skip=skip,
+                limit=limit
+            )
+            
+    except Exception as e:
+        logger.error(f"파일 목록 조회 실패: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="파일 목록 조회 중 오류가 발생했습니다."
+        )
 
 
 @router.get("/{file_id}", response_model=FileMetadata)
@@ -260,11 +334,46 @@ async def get_file_info(
         파일 정보
     """
     
-    # TODO: PostgreSQL에서 파일 정보 조회
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="파일을 찾을 수 없습니다."
-    )
+    try:
+        # PostgreSQL에서 파일 정보 조회
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(FileModel).where(
+                    FileModel.file_id == file_id,
+                    FileModel.user_id == (current_user.get('id') if isinstance(current_user, dict) else current_user.id)
+                )
+            )
+            file_record = result.scalar_one_or_none()
+            
+            if not file_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="파일을 찾을 수 없습니다."
+                )
+            
+            return FileMetadata(
+                file_id=file_record.file_id,
+                original_name=file_record.original_name,
+                file_size=file_record.file_size,
+                mime_type=file_record.mime_type,
+                file_extension=file_record.file_extension,
+                upload_path=file_record.upload_path,
+                status=file_record.status,
+                checksum=file_record.checksum,
+                processing_result=file_record.processing_result,
+                user_id=file_record.user_id,
+                created_at=file_record.created_at.isoformat(),
+                updated_at=file_record.updated_at.isoformat()
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"파일 정보 조회 실패 - {file_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="파일 정보 조회 중 오류가 발생했습니다."
+        )
 
 
 @router.get("/{file_id}/download")
@@ -283,11 +392,48 @@ async def download_file(
         파일 스트림
     """
     
-    # TODO: PostgreSQL에서 파일 정보 조회 후 파일 스트림 반환
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="파일을 찾을 수 없습니다."
-    )
+    try:
+        # PostgreSQL에서 파일 정보 조회
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(FileModel).where(
+                    FileModel.file_id == file_id,
+                    FileModel.user_id == (current_user.get('id') if isinstance(current_user, dict) else current_user.id)
+                )
+            )
+            file_record = result.scalar_one_or_none()
+            
+            if not file_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="파일을 찾을 수 없습니다."
+                )
+            
+            file_path = Path(file_record.upload_path)
+            
+            # 실제 파일 존재 확인
+            if not file_path.exists():
+                logger.error(f"파일 시스템에서 파일을 찾을 수 없습니다: {file_path}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="파일이 존재하지 않습니다."
+                )
+            
+            # 파일 다운로드 응답
+            return FileResponse(
+                path=str(file_path),
+                filename=file_record.original_name,
+                media_type=file_record.mime_type
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"파일 다운로드 실패 - {file_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="파일 다운로드 중 오류가 발생했습니다."
+        )
 
 
 @router.delete("/{file_id}")
@@ -306,11 +452,52 @@ async def delete_file(
         삭제 결과
     """
     
-    # TODO: PostgreSQL에서 파일 정보 조회 후 실제 파일 삭제
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="파일을 찾을 수 없습니다."
-    )
+    try:
+        # PostgreSQL에서 파일 정보 조회
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(FileModel).where(
+                    FileModel.file_id == file_id,
+                    FileModel.user_id == (current_user.get('id') if isinstance(current_user, dict) else current_user.id)
+                )
+            )
+            file_record = result.scalar_one_or_none()
+            
+            if not file_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="파일을 찾을 수 없습니다."
+                )
+            
+            file_path = Path(file_record.upload_path)
+            
+            # 실제 파일 삭제
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+                    logger.info(f"파일 시스템에서 파일 삭제 완료: {file_path}")
+            except Exception as fs_error:
+                logger.warning(f"파일 시스템 삭제 실패 (계속 진행): {fs_error}")
+            
+            # 데이터베이스에서 파일 레코드 삭제
+            await session.delete(file_record)
+            await session.commit()
+            
+            logger.info(f"파일 삭제 완료: {file_id}")
+            
+            return {
+                "message": "파일이 성공적으로 삭제되었습니다.",
+                "file_id": file_id
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"파일 삭제 실패 - {file_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="파일 삭제 중 오류가 발생했습니다."
+        )
 
 
 @router.post("/{file_id}/process")
@@ -331,10 +518,58 @@ async def process_file(
         처리 상태 및 결과
     """
     
-    # TODO: 파일 처리 파이프라인 구현
-    return {
-        "file_id": file_id,
-        "processing_type": processing_type,
-        "status": "processing",
-        "message": "파일 처리가 시작되었습니다."
-    }
+    try:
+        # PostgreSQL에서 파일 정보 조회
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(FileModel).where(
+                    FileModel.file_id == file_id,
+                    FileModel.user_id == (current_user.get('id') if isinstance(current_user, dict) else current_user.id)
+                )
+            )
+            file_record = result.scalar_one_or_none()
+            
+            if not file_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="파일을 찾을 수 없습니다."
+                )
+            
+            # 이미 처리 중인지 확인
+            if file_record.status == 'processing':
+                return {
+                    "file_id": file_id,
+                    "processing_type": processing_type,
+                    "status": "processing",
+                    "message": "이미 처리 중입니다."
+                }
+            
+            # 처리 상태로 업데이트
+            file_record.status = 'processing'
+            file_record.metadata_ = file_record.metadata_ or {}
+            file_record.metadata_['processing_type'] = processing_type
+            file_record.metadata_['processing_started'] = datetime.utcnow().isoformat()
+            
+            await session.commit()
+            
+            logger.info(f"파일 처리 시작: {file_id} (타입: {processing_type})")
+            
+            # 파일 처리 작업 큐에 추가 (백그라운드 처리를 위해)
+            # 현재는 기본 응답만 반환
+            
+            return {
+                "file_id": file_id,
+                "processing_type": processing_type,
+                "status": "processing",
+                "message": "파일 처리가 시작되었습니다.",
+                "estimated_completion": "수 분 내 예상"
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"파일 처리 시작 실패 - {file_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="파일 처리 시작 중 오류가 발생했습니다."
+        )

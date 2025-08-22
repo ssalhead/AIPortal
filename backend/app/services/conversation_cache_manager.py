@@ -11,10 +11,13 @@ from collections import OrderedDict
 import json
 import hashlib
 import asyncio
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from app.services.cache_manager import cache_manager
 from app.db.models.conversation import Conversation, Message, MessageRole, ConversationStatus
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationCacheManager:
@@ -188,6 +191,19 @@ class ConversationCacheManager:
         
         messages = []
         for row in result:
+            # metadata에서 canvas_data 추출
+            metadata = row.metadata_ or {}
+            canvas_data = metadata.get('canvas_data', None)
+            
+            # Canvas 데이터 조회 로깅
+            if canvas_data:
+                logger.info(f"🔍 Canvas 데이터 조회 성공 - message_id: {row.id}, 타입: {canvas_data.get('type', 'unknown')}")
+                logger.debug(f"🔍 조회된 Canvas 데이터 상세: {canvas_data}")
+            elif metadata:
+                logger.debug(f"🔍 메타데이터 있지만 Canvas 데이터 없음 - message_id: {row.id}, metadata 키: {list(metadata.keys())}")
+            else:
+                logger.debug(f"🔍 메타데이터 없음 - message_id: {row.id}")
+            
             message_data = {
                 'id': str(row.id),
                 'role': (row.role.value if hasattr(row.role, 'value') else str(row.role)).upper(),
@@ -199,9 +215,19 @@ class ConversationCacheManager:
                 'metadata_': row.metadata_,
                 'attachments': row.attachments,
                 'created_at': row.created_at.isoformat() if row.created_at else None,
-                'updated_at': row.updated_at.isoformat() if row.updated_at else None
+                'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+                'canvas_data': canvas_data  # Canvas 데이터를 별도 필드로 제공
             }
             messages.append(message_data)
+        
+        # 반환 전 Canvas 데이터 포함 여부 확인
+        canvas_messages = [msg for msg in messages if msg.get('canvas_data')]
+        if canvas_messages:
+            logger.info(f"📤 메시지 반환 - Canvas 데이터 포함된 메시지 수: {len(canvas_messages)}/{len(messages)}")
+            for msg in canvas_messages:
+                logger.debug(f"📤 Canvas 메시지 반환: ID={msg['id']}, canvas_data 타입={msg['canvas_data'].get('type', 'unknown')}")
+        else:
+            logger.debug(f"📤 메시지 반환 - Canvas 데이터 없음 ({len(messages)}개 메시지)")
         
         # 캐시에 저장 (L1 + L2)
         await self.base_cache.set(cache_key, messages, session, ttl_seconds=600)  # 10분

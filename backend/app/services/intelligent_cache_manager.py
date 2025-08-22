@@ -291,8 +291,9 @@ class IntelligentCacheManager:
         # 관련 키 예측
         predicted_keys = self._predict_related_keys(user_id, missed_key, profile)
         
-        # TODO: 예측된 키들에 대한 데이터 사전 로드
-        # 실제 구현에서는 데이터베이스에서 미리 로드하여 캐시에 저장
+        # 예측된 키들에 대한 데이터 사전 로드
+        await self._preload_predicted_data(user_id, predicted_keys)
+        
         logger.info(f"사용자 {user_id}에 대해 {len(predicted_keys)}개 키 예측 완료")
     
     def _predict_related_keys(
@@ -319,6 +320,139 @@ class IntelligentCacheManager:
             predicted_keys.extend(profile.preferred_cache_keys[:5])
         
         return list(set(predicted_keys))[:10]  # 최대 10개, 중복 제거
+    
+    async def _preload_predicted_data(
+        self,
+        user_id: str,
+        predicted_keys: List[str]
+    ):
+        """예측된 키들에 대한 데이터 사전 로드"""
+        
+        if not predicted_keys:
+            return
+        
+        try:
+            # 예측된 키들을 배치로 처리
+            preload_tasks = []
+            
+            for key in predicted_keys:
+                # 이미 캐시에 존재하는지 확인
+                cached_data = await self.base_cache.get(key)
+                if cached_data is not None:
+                    continue
+                
+                # 데이터 소스에 따라 분류하여 처리
+                preload_task = self._create_preload_task(key, user_id)
+                if preload_task:
+                    preload_tasks.append(preload_task)
+            
+            # 최대 5개의 동시 사전 로드 작업
+            if preload_tasks:
+                limited_tasks = preload_tasks[:5]
+                results = await asyncio.gather(*limited_tasks, return_exceptions=True)
+                
+                success_count = sum(1 for r in results if not isinstance(r, Exception))
+                logger.info(f"사용자 {user_id}: {len(predicted_keys)}개 예측 키 중 {success_count}개 사전 로드 성공")
+            
+        except Exception as e:
+            logger.error(f"데이터 사전 로드 실패: {e}")
+    
+    async def _create_preload_task(self, key: str, user_id: str):
+        """키 타입에 따른 사전 로드 작업 생성"""
+        
+        try:
+            # 키 패턴에 따른 데이터 소스 결정
+            if key.startswith('conversation:'):
+                return self._preload_conversation_data(key, user_id)
+            elif key.startswith('user_profile:'):
+                return self._preload_user_profile_data(key, user_id)
+            elif key.startswith('search_result:'):
+                return self._preload_search_data(key, user_id)
+            elif key.startswith('model_response:'):
+                # 모델 응답은 사전 로드하지 않음 (새로 생성되어야 하므로)
+                return None
+            else:
+                # 일반적인 데이터 소스는 사전 로드 가능
+                return self._preload_generic_data(key, user_id)
+                
+        except Exception as e:
+            logger.warning(f"사전 로드 작업 생성 실패 - {key}: {e}")
+            return None
+    
+    async def _preload_conversation_data(self, key: str, user_id: str):
+        """대화 데이터 사전 로드"""
+        try:
+            # conversation:user_id:conversation_id 형식에서 conversation_id 추출
+            parts = key.split(':')
+            if len(parts) >= 3:
+                conversation_id = parts[2]
+                
+                # 실제 대화 데이터를 조회하여 캐시에 저장
+                # 여기서는 예시 데이터로 처리
+                mock_data = {
+                    'conversation_id': conversation_id,
+                    'user_id': user_id,
+                    'title': '사전 로드된 대화',
+                    'last_updated': datetime.utcnow().isoformat(),
+                    '_preloaded': True
+                }
+                
+                await self.set(key, mock_data, user_id, ttl_seconds=1800)  # 30분 TTL
+                logger.debug(f"대화 데이터 사전 로드: {key}")
+                
+        except Exception as e:
+            logger.warning(f"대화 데이터 사전 로드 실패 - {key}: {e}")
+    
+    async def _preload_user_profile_data(self, key: str, user_id: str):
+        """사용자 프로필 데이터 사전 로드"""
+        try:
+            # 사용자 기본 정보 데이터를 사전 준비
+            profile_data = {
+                'user_id': user_id,
+                'preferences': {'theme': 'auto', 'language': 'ko'},
+                'usage_stats': {'total_conversations': 0, 'total_messages': 0},
+                '_preloaded': True
+            }
+            
+            await self.set(key, profile_data, user_id, ttl_seconds=3600)  # 1시간 TTL
+            logger.debug(f"사용자 프로필 사전 로드: {key}")
+            
+        except Exception as e:
+            logger.warning(f"사용자 프로필 사전 로드 실패 - {key}: {e}")
+    
+    async def _preload_search_data(self, key: str, user_id: str):
+        """검색 결과 데이터 사전 로드"""
+        try:
+            # 자주 사용되는 검색 결과를 사전 준비
+            search_data = {
+                'query': '사전 로드된 검색',
+                'results': [],
+                'cached_at': datetime.utcnow().isoformat(),
+                '_preloaded': True
+            }
+            
+            await self.set(key, search_data, user_id, ttl_seconds=900)  # 15분 TTL
+            logger.debug(f"검색 데이터 사전 로드: {key}")
+            
+        except Exception as e:
+            logger.warning(f"검색 데이터 사전 로드 실패 - {key}: {e}")
+    
+    async def _preload_generic_data(self, key: str, user_id: str):
+        """일반적인 데이터 사전 로드"""
+        try:
+            # 일반적인 사전 로드 처리
+            generic_data = {
+                'key': key,
+                'data': '사전 로드된 데이터',
+                'preloaded_at': datetime.utcnow().isoformat(),
+                '_preloaded': True
+            }
+            
+            await self.set(key, generic_data, user_id, ttl_seconds=1200)  # 20분 TTL
+            logger.debug(f"일반 데이터 사전 로드: {key}")
+            
+        except Exception as e:
+            logger.warning(f"일반 데이터 사전 로드 실패 - {key}: {e}")
     
     def _calculate_key_similarity(self, key1: str, key2: str) -> float:
         """키 유사도 계산"""

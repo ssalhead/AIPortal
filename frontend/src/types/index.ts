@@ -37,16 +37,117 @@ export interface ChatResponse {
   citations?: Citation[];
   sources?: Source[];
   citation_stats?: CitationStats;
+  metadata?: ChatMetadata;
+  canvas_data?: CanvasData; // Canvas 데이터 추가
+}
+
+// Canvas 데이터 타입
+export interface CanvasData {
+  type: string; // "image", "mindmap", "diagram", etc.
+  title: string;
+  description: string;
+  image_data?: {
+    job_id: string;
+    prompt: string;
+    style: string;
+    size: string;
+    num_images: number;
+    generation_result: {
+      status: string;
+      images: string[];
+      estimated_completion_time?: string;
+      metadata?: any;
+    };
+  };
+  elements?: any[];
+  connections?: any[];
   metadata?: {
-    search_queries?: string[];
-    original_query?: string;
-    context_integrated_queries?: string[];
-    has_conversation_context?: boolean;
-    needs_more_info?: boolean;
-    information_gaps?: InformationGap[];
-    suggested_questions?: string[];
+    created_by: string;
+    canvas_type: string;
     [key: string]: any;
   };
+}
+
+// Canvas Artifact 타입 - Artifact 링크 시스템용
+export interface CanvasArtifact {
+  id: string;
+  type: 'image' | 'mindmap' | 'diagram' | 'text' | 'code';
+  title: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress?: number;
+  canvas_data: CanvasData;
+  created_at: string;
+  updated_at: string;
+  message_id: string; // 연결된 메시지 ID
+  conversation_id?: string; // 대화 ID
+}
+
+// 채팅 메타데이터 타입
+export interface ChatMetadata {
+  search_queries?: string[];
+  original_query?: string;
+  context_integrated_queries?: string[];
+  has_conversation_context?: boolean;
+  needs_more_info?: boolean;
+  information_gaps?: InformationGap[];
+  suggested_questions?: string[];
+  context_applied?: boolean;
+  search_results_count?: number;
+  processing_time_ms?: number;
+  model_confidence?: number;
+  [key: string]: unknown;
+}
+
+// 스트리밍 진행 메타데이터 타입
+export interface StreamingProgressMetadata {
+  step: string;
+  progress: number;
+  total_steps?: number;
+  current_operation?: string;
+  estimated_time_remaining?: number;
+  search_query?: string;
+  sources_found?: number;
+  [key: string]: unknown;
+}
+
+// 대화 메시지 타입 (UI용)
+export interface Message {
+  id: string;
+  content: string; // ChatPage에서 사용하는 필드명
+  text?: string;   // ChatMessage 컴포넌트에서 사용하는 필드명 
+  isUser: boolean;
+  timestamp: string;
+  model?: string;
+  agentType?: string;
+  citations?: Citation[];
+  sources?: Source[];
+  searchResults?: SearchResult[];
+  searchQuery?: string;
+  originalQuery?: string;
+  hasContext?: boolean;
+  isTyping?: boolean;
+  isLoading?: boolean;
+  searchStatus?: {
+    isSearching: boolean;
+    currentStep: string;
+    progress: number;
+  };
+  streamingChunk?: string;
+  isStreamingMode?: boolean;
+  canvas_artifacts?: CanvasArtifact[]; // 연결된 Canvas 작업들
+  canvasData?: CanvasData; // 직접 연결된 Canvas 데이터
+}
+
+// 검색 결과 타입
+export interface SearchResult {
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  domain: string;
+  publishedDate?: string;
+  relevanceScore?: number;
+  thumbnail?: string;
 }
 
 // 인용 타입
@@ -75,7 +176,7 @@ export interface Source {
   thumbnail?: string;
   language?: string;
   reliabilityScore: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 // 인용 통계 타입

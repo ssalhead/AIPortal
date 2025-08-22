@@ -88,15 +88,40 @@ class MockLLMResponse:
     
     @classmethod
     async def stream_response(cls, query: str, model: str = "mock-llm") -> AsyncGenerator[str, None]:
-        """스트리밍 Mock 응답 생성"""
+        """스트리밍 Mock 응답 생성 (줄바꿈 포함)"""
         response = cls.generate_response(query, model)
         
-        # 단어별로 스트리밍 (실제 LLM 동작 시뮬레이션)
-        words = response.split()
+        # 문장별로 스트리밍 (줄바꿈 포함 청크)
+        import re
         
-        for i, word in enumerate(words):
-            # 마지막 단어가 아닌 경우 공백 추가
-            chunk = word + (" " if i < len(words) - 1 else "")
+        # 문장과 줄바꿈을 기준으로 청크 분할
+        chunks = []
+        lines = response.split('\n')
+        
+        for line in lines:
+            if line.strip():
+                # 긴 줄은 문장으로 분할
+                sentences = re.split(r'([.!?]\s+)', line)
+                current_chunk = ""
+                
+                for sentence in sentences:
+                    current_chunk += sentence
+                    if len(current_chunk) > 30 or sentence.endswith(('.', '!', '?')):
+                        if current_chunk.strip():
+                            chunks.append(current_chunk)
+                            current_chunk = ""
+                
+                if current_chunk.strip():
+                    chunks.append(current_chunk)
+            else:
+                # 빈 줄은 줄바꿈으로 추가
+                chunks.append('\n')
+        
+        # 청크별로 스트리밍
+        for i, chunk in enumerate(chunks):
+            if i < len(chunks) - 1 and not chunk.endswith('\n'):
+                chunk += '\n'  # 줄바꿈 추가
+            
             yield chunk
             
             # 스트리밍 딜레이 (실제 LLM 느낌)

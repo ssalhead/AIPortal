@@ -222,7 +222,8 @@ class ConversationHistoryService:
         tokens_output: Optional[int] = None,
         latency_ms: Optional[int] = None,
         metadata_: Optional[Dict[str, Any]] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        canvas_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """메시지 추가"""
         try:
@@ -232,6 +233,15 @@ class ConversationHistoryService:
             
             if not conversation or str(conversation.user_id) != str(user_id):
                 raise ValueError("대화를 찾을 수 없거나 접근 권한이 없습니다.")
+            
+            # canvas_data를 메타데이터에 포함
+            message_metadata = metadata_ or {}
+            if canvas_data:
+                message_metadata["canvas_data"] = canvas_data
+                logger.info(f"💾 Canvas 데이터 저장 - conversation_id: {conversation_id}, canvas_data 크기: {len(str(canvas_data))}, 타입: {canvas_data.get('type', 'unknown')}")
+                logger.debug(f"💾 저장할 Canvas 데이터 상세: {canvas_data}")
+            else:
+                logger.debug(f"💾 Canvas 데이터 없음 - conversation_id: {conversation_id}")
             
             # 메시지 생성
             message_repo = MessageRepository(session)
@@ -243,7 +253,7 @@ class ConversationHistoryService:
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
                 latency_ms=latency_ms,
-                metadata_=metadata_ or {},
+                metadata_=message_metadata,
                 attachments=attachments or []
             )
             

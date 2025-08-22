@@ -3,13 +3,15 @@
  */
 
 import axios from 'axios';
+import { loggers } from '../utils/logger';
 import type { 
   ChatMessage, 
   ChatResponse, 
   ConversationHistory, 
   AgentInfo, 
   AgentExecuteRequest, 
-  AgentExecuteResponse 
+  AgentExecuteResponse,
+  StreamingProgressMetadata
 } from '../types';
 
 export interface ChatMessageWithSession extends ChatMessage {
@@ -35,11 +37,11 @@ class ApiService {
     // 요청 인터셉터
     this.client.interceptors.request.use(
       (config) => {
-        console.log(`API 요청: ${config.method?.toUpperCase()} ${config.url}`);
+        loggers.api(config.method || 'unknown', config.url || '', 'ApiService');
         return config;
       },
       (error) => {
-        console.error('API 요청 에러:', error);
+        loggers.error('API 요청 에러', error, 'ApiService');
         return Promise.reject(error);
       }
     );
@@ -47,11 +49,11 @@ class ApiService {
     // 응답 인터셉터
     this.client.interceptors.response.use(
       (response) => {
-        console.log(`API 응답: ${response.status} ${response.config.url}`);
+        loggers.debug(`API 응답: ${response.status}`, undefined, 'ApiService');
         return response;
       },
       (error) => {
-        console.error('API 응답 에러:', error.response?.data || error.message);
+        loggers.error('API 응답 에러', error, 'ApiService');
         return Promise.reject(error);
       }
     );
@@ -72,14 +74,14 @@ class ApiService {
   // 채팅 메시지 전송 (세션 지원)
   async sendChatMessage(message: ChatMessageWithSession): Promise<ChatResponseWithSession> {
     const response = await this.client.post('/chat', message);
-    console.log('API 응답 받음:', response.data);
+    loggers.debug('채팅 응답 받음', response.data, 'ApiService');
     return response.data;
   }
 
   // 실시간 진행 상태와 함께 채팅 메시지 전송 (SSE) - 청크 스트리밍 지원
   async sendChatMessageWithProgress(
     message: ChatMessage,
-    onProgress: (step: string, progress: number, metadata?: any) => void,
+    onProgress: (step: string, progress: number, metadata?: StreamingProgressMetadata) => void,
     onChunk: (text: string, isFirst: boolean, isFinal: boolean) => void,
     onResult: (result: ChatResponse) => void,
     onError: (error: string) => void
@@ -125,16 +127,16 @@ class ApiService {
               
               switch (eventData.type) {
                 case 'start':
-                  console.log('채팅 시작:', eventData.data.message);
+                  loggers.info('채팅 시작', 'ApiService');
                   break;
                   
                 case 'context':
                   // 대화 컨텍스트 정보 수신
-                  console.log('🧠 컨텍스트 분석 완료:', eventData.data);
+                  loggers.info('컨텍스트 분석 완료', 'ApiService');
                   if (eventData.data.has_context) {
-                    console.log('✅ 이전 대화 맥락 적용됨');
+                    loggers.debug('이전 대화 맥락 적용됨', undefined, 'ApiService');
                   } else {
-                    console.log('ℹ️ 새로운 대화 시작');
+                    loggers.debug('새로운 대화 시작', undefined, 'ApiService');
                   }
                   break;
                   
@@ -144,46 +146,49 @@ class ApiService {
                   
                 case 'metadata':
                   // 메타데이터 수신 - 스트리밍 준비
-                  console.log('📊 메타데이터 수신:', eventData.data);
+                  loggers.debug('메타데이터 수신', eventData.data, 'ApiService');
                   if (eventData.data.context_applied) {
-                    console.log('✅ 대화 컨텍스트가 적용되었습니다');
+                    loggers.info('대화 컨텍스트 적용 완료', 'ApiService');
                   }
                   break;
                   
                 case 'chunk':
-                  // 청크 데이터 수신 - 타이핑 효과로 표시
+                  // 청크 데이터 수신 - 타이핑 효과로 표시 (빈도 제어된 로깅)
                   const chunkData = eventData.data;
-                  console.log('📝 청크 수신:', chunkData.text, '(인덱스:', chunkData.index, ', 마지막:', chunkData.is_final, ')');
+                  loggers.stream(`청크 수신 [${chunkData.index}]`, { 
+                    length: chunkData.text.length, 
+                    final: chunkData.is_final 
+                  }, 'ApiService');
                   onChunk(chunkData.text, chunkData.index === 0, chunkData.is_final);
                   break;
                   
                 case 'result':
-                  console.log('🎯 스트리밍 result 이벤트 (정상 완료):', eventData.data);
+                  loggers.info('스트리밍 완료', 'ApiService');
                   // result 이벤트는 정상 완료를 의미하므로 onResult 콜백 호출
                   onResult(eventData.data);
                   break;
                   
                 case 'end':
-                  console.log('채팅 완료:', eventData.data.message);
+                  loggers.info('채팅 완료', 'ApiService');
                   // end 이벤트에서 스트리밍 완료
                   return;
                   
                 case 'error':
-                  console.error('❌ 스트리밍 에러 이벤트:', eventData.data);
+                  loggers.error('스트리밍 에러', new Error(eventData.data.message), 'ApiService');
                   onError(eventData.data.message);
                   return;
                   
                 default:
-                  console.log('Unknown event type:', eventData.type);
+                  loggers.warn(`Unknown event type: ${eventData.type}`, 'ApiService');
               }
             } catch (parseError) {
-              console.error('SSE 메시지 파싱 오류:', parseError);
+              loggers.error('SSE 메시지 파싱 오류', parseError as Error, 'ApiService');
             }
           }
         }
       }
     } catch (error) {
-      console.error('SSE 연결 오류:', error);
+      loggers.error('SSE 연결 오류', error as Error, 'ApiService');
       onError(error instanceof Error ? error.message : 'SSE 연결에 실패했습니다.');
     }
   }

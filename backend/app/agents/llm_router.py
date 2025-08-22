@@ -6,15 +6,15 @@ from typing import Optional, Dict, Any, AsyncGenerator, List
 from langchain_aws import ChatBedrock
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.language_models import BaseLanguageModel
-import logging
 import boto3
 from datetime import datetime
 
 from app.core.config import settings
 from app.agents.mock_llm import mock_llm
 from app.services.logging_service import logging_service, log_llm_usage
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LLMRouter:
@@ -48,7 +48,7 @@ class LLMRouter:
                             "top_p": 0.9,
                         }
                     )
-                    logger.info("AWS Bedrock Claude 4.0 Sonnet 모델 초기화 완료")
+                    logger.debug("AWS Bedrock Claude 4.0 Sonnet 모델 초기화 완료")
                     
                     # Claude 3.7 Sonnet - inference profile 사용
                     self._models["claude-3.7"] = ChatBedrock(
@@ -60,7 +60,7 @@ class LLMRouter:
                             "top_p": 0.9,
                         }
                     )
-                    logger.info("AWS Bedrock Claude 3.7 Sonnet 모델 초기화 완료")
+                    logger.debug("AWS Bedrock Claude 3.7 Sonnet 모델 초기화 완료")
                     
                     # Claude 3.5 Sonnet (기본 모델)
                     self._models["claude"] = ChatBedrock(
@@ -72,7 +72,7 @@ class LLMRouter:
                             "top_p": 0.9,
                         }
                     )
-                    logger.info("AWS Bedrock Claude 3.5 Sonnet 모델 초기화 완료")
+                    logger.debug("AWS Bedrock Claude 3.5 Sonnet 모델 초기화 완료")
                     
                     # Claude 3.5 Sonnet (별칭 - 명시적 버전)
                     self._models["claude-3.5"] = ChatBedrock(
@@ -84,7 +84,7 @@ class LLMRouter:
                             "top_p": 0.9,
                         }
                     )
-                    logger.info("AWS Bedrock Claude 3.5 Sonnet (별칭) 모델 초기화 완료")
+                    logger.debug("AWS Bedrock Claude 3.5 Sonnet (별칭) 모델 초기화 완료")
                     
                     # Claude 3.5 Haiku (빠른 응답용)
                     self._models["claude-haiku"] = ChatBedrock(
@@ -95,7 +95,7 @@ class LLMRouter:
                             "max_tokens": 4096,
                         }
                     )
-                    logger.info("AWS Bedrock Claude 3.5 Haiku 모델 초기화 완료")
+                    logger.debug("AWS Bedrock Claude 3.5 Haiku 모델 초기화 완료")
                     
                 except Exception as e:
                     logger.error(f"AWS Bedrock 초기화 실패: {e}")
@@ -113,7 +113,7 @@ class LLMRouter:
                         max_output_tokens=8192,
                         top_p=0.9,
                     )
-                    logger.info("Google Gemini 1.5 Pro 모델 초기화 완료")
+                    logger.debug("Google Gemini 1.5 Pro 모델 초기화 완료")
                     
                     # Gemini Flash (더 빠른 응답용)
                     self._models["gemini-flash"] = ChatGoogleGenerativeAI(
@@ -122,7 +122,7 @@ class LLMRouter:
                         temperature=0.7,
                         max_output_tokens=8192,
                     )
-                    logger.info("Google Gemini 1.5 Flash 모델 초기화 완료")
+                    logger.debug("Google Gemini 1.5 Flash 모델 초기화 완료")
                     
                     # Gemini 1.0 Pro (기본 모델)
                     self._models["gemini-1.0"] = ChatGoogleGenerativeAI(
@@ -131,11 +131,11 @@ class LLMRouter:
                         temperature=0.7,
                         max_output_tokens=8192,
                     )
-                    logger.info("Google Gemini 1.0 Pro 모델 초기화 완료")
+                    logger.debug("Google Gemini 1.0 Pro 모델 초기화 완료")
                     
                     # Gemini 기본 별칭 (gemini-pro로 매핑)
                     self._models["gemini"] = self._models["gemini-pro"]
-                    logger.info("Google Gemini 기본 별칭 설정 완료")
+                    logger.debug("Google Gemini 기본 별칭 설정 완료")
                     
                 except Exception as e:
                     logger.error(f"Google Gemini 초기화 실패: {e}")
@@ -172,7 +172,7 @@ class LLMRouter:
         # 우선순위: gemini-pro > gemini-flash > gemini-1.0 > claude-4 > claude-3.7 > claude-3.5 > claude > claude-haiku (Gemini 우선 - 안정성)
         for model_name in ["gemini-pro", "gemini-flash", "gemini-1.0", "claude-4", "claude-3.7", "claude-3.5", "claude", "claude-haiku"]:
             if model_name in self._models:
-                logger.info(f"Fallback 모델로 {model_name} 사용")
+                logger.debug(f"Fallback 모델로 {model_name} 사용")
                 return self._models[model_name]
         
         logger.error("사용 가능한 모델이 없음")
@@ -229,7 +229,7 @@ class LLMRouter:
         # 사용 가능한 모델 중에서 첫 번째 우선순위 모델 선택
         for model in preferred_models:
             if model in available_models:
-                logger.info(f"작업 유형 '{task_type}'에 대해 '{model}' 모델 선택")
+                logger.debug(f"작업 유형 '{task_type}'에 대해 '{model}' 모델 선택")
                 return model
         
         # fallback
@@ -294,7 +294,7 @@ class LLMRouter:
         
         # Mock 모드 확인
         if self.is_mock_mode():
-            logger.info(f"Mock 모드로 응답 생성 - 요청된 모델: {model_name}")
+            logger.debug_performance("Mock 모드 응답 생성", {"model": model_name})
             mock_model_name = f"mock-{model_name.lower()}"
             response = mock_llm.generate_response(final_prompt, mock_model_name)
             return response, mock_model_name
@@ -432,7 +432,7 @@ class LLMRouter:
 
 위 대화 맥락을 고려하여 답변해주세요."""
                 
-                logger.info(f"컨텍스트 포함 프롬프트 생성 완료 (예상 토큰: {total_tokens})")
+                logger.debug_performance("컨텍스트 포함 프롬프트 생성 완료", {"tokens": total_tokens})
                 return final_prompt
             else:
                 return message
@@ -478,7 +478,7 @@ class LLMRouter:
         
         # Mock 모드 확인
         if self.is_mock_mode():
-            logger.info(f"Mock 스트리밍 응답 생성 - 요청된 모델: {model_name}")
+            logger.debug_streaming("Mock 스트리밍 응답 생성", {"model": model_name})
             mock_model_name = f"mock-{model_name.lower()}"
             async for chunk in mock_llm.stream_response(final_prompt, mock_model_name):
                 yield chunk
@@ -504,13 +504,43 @@ class LLMRouter:
                 response = await model.ainvoke(final_prompt)
                 content = response.content
                 
-                # 단어별로 스트리밍 시뮬레이션
+                # 문장별로 스트리밍 시뮬레이션 (줄바꿈 포함)
                 import asyncio
-                words = content.split()
-                for i, word in enumerate(words):
-                    chunk = word + (" " if i < len(words) - 1 else "")
+                import re
+                
+                logger.debug_streaming("실제 LLM 응답 청크 분할", {"length": len(content)})
+                
+                # 문장과 줄바꿈을 기준으로 청크 분할
+                chunks = []
+                lines = content.split('\n')
+                
+                for line in lines:
+                    if line.strip():
+                        # 긴 줄은 문장으로 분할
+                        sentences = re.split(r'([.!?]\s+)', line)
+                        current_chunk = ""
+                        
+                        for sentence in sentences:
+                            current_chunk += sentence
+                            if len(current_chunk) > 50 or sentence.endswith(('.', '!', '?')):
+                                if current_chunk.strip():
+                                    chunks.append(current_chunk)
+                                    current_chunk = ""
+                        
+                        if current_chunk.strip():
+                            chunks.append(current_chunk)
+                    else:
+                        # 빈 줄은 줄바꿈으로 추가
+                        chunks.append('\n')
+                
+                # 청크별로 스트리밍
+                for i, chunk in enumerate(chunks):
+                    if i < len(chunks) - 1 and not chunk.endswith('\n'):
+                        chunk += '\n'  # 줄바꿈 추가
+                    
+                    logger.debug(f"📤 청크 전송: {repr(chunk[:30])}")
                     yield chunk
-                    await asyncio.sleep(0.03)  # 스트리밍 딜레이
+                    await asyncio.sleep(0.05)  # 스트리밍 딜레이
                     
         except Exception as e:
             logger.error(f"스트리밍 응답 생성 중 오류: {e}")

@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef, useCallback, useMemo } from 'react';
+import { loggers } from '../../utils/logger';
 import './StreamingMarkdown.css';
 
 export interface ProgressiveMarkdownProps {
@@ -232,11 +233,11 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
       const startTime = performance.now();
       performanceMonitor.current.parseStartTime = startTime;
       
-      // 성능 최적화를 위해 핵심 로그만 유지
-      console.log('🔄 증분 파싱:', {
-        현재길이: chunk.length,
-        새로운데이터: chunk.length - incrementalState.lastProcessedLength
-      });
+      // 성능 최적화를 위해 핵심 로그만 유지 (성능 디버깅 시에만 출력)
+      loggers.perf('증분 파싱', {
+        currentLength: chunk.length,
+        newData: chunk.length - incrementalState.lastProcessedLength
+      }, 'ProgressiveMarkdown');
       
       fullTextRef.current = chunk;
       
@@ -310,7 +311,7 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
      * 스트리밍 완료 - 마지막 줄도 완성된 것으로 처리
      */
     const endStreaming = useCallback(() => {
-      console.log('🏁 스트리밍 완료 - 최종 파싱');
+      loggers.info('스트리밍 완료 - 최종 파싱', 'ProgressiveMarkdown');
       
       setIncrementalState(prevState => {
         const newCompletedLines = [...prevState.completedLines];
@@ -336,12 +337,12 @@ export const ProgressiveMarkdown = forwardRef<ProgressiveMarkdownRef, Progressiv
         updateParsedLines(finalState);
         onStreamingComplete?.();
         
-        console.log('📊 최종 성능 통계:', {
-          총파싱시간: Math.round(performanceMonitor.current.totalParseTime) + 'ms',
-          평균파싱시간: Math.round(performanceMonitor.current.averageParseTime * 100) / 100 + 'ms',
-          처리청크수: performanceMonitor.current.parsedChunks,
-          최종줄수: newCompletedLines.length
-        });
+        loggers.perf('최종 성능 통계', {
+          totalParseTime: Math.round(performanceMonitor.current.totalParseTime) + 'ms',
+          avgParseTime: Math.round(performanceMonitor.current.averageParseTime * 100) / 100 + 'ms',
+          processedChunks: performanceMonitor.current.parsedChunks,
+          finalLines: newCompletedLines.length
+        }, 'ProgressiveMarkdown');
         
         return finalState;
       });

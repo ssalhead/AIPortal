@@ -7,7 +7,7 @@ import type { LLMModel, AgentType, LLMProvider } from '../../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../../types';
 import { useLoading } from '../../contexts/LoadingContext';
 import { useResponsive } from '../../hooks/useResponsive';
-import { Send, Paperclip, ChevronDown, Star, Zap, X } from 'lucide-react';
+import { Send, Paperclip, ChevronDown, Star, Zap, X } from '../ui/Icons';
 import { fileService } from '../../services/fileService';
 
 interface ChatInputProps {
@@ -81,11 +81,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   // 에이전트 토글 핸들러 (단일 선택, 같은 것 클릭시 해제)
   const handleAgentToggle = (agentType: AgentType) => {
+    // Canvas 버튼은 특별 처리 - 빈 Canvas 열기 차단
+    if (agentType === 'canvas') {
+      handleCanvasAction();
+      return;
+    }
+    
     if (selectedAgent === agentType) {
       onAgentChange('none'); // 같은 버튼 클릭시 해제
     } else {
       onAgentChange(agentType); // 다른 버튼 클릭시 변경
     }
+  };
+  
+  // Canvas 버튼 클릭 처리 - 빈 Canvas 대신 안내 또는 최근 작업 표시
+  const handleCanvasAction = () => {
+    // 현재는 안내 메시지만 표시 (향후 Canvas 히스토리 모달로 확장 가능)
+    alert('Canvas는 AI가 시각적 콘텐츠를 생성할 때 자동으로 활성화됩니다.\n\n예시: "고양이 그려줘", "마인드맵 만들어줘"');
   };
 
   // 외부 클릭시 드롭다운 닫기

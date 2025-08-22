@@ -47,7 +47,9 @@
       "Bash(pkill:*)",
       "Bash(docker-compose:*)",
       "Bash(npm run:*)",
-      "Bash(journalctl:*)"
+      "Bash(journalctl:*)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:developers.google.com)"
     ],
     "deny": [],
     "additionalDirectories": [

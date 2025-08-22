@@ -93,6 +93,29 @@ async def get_current_active_user(
     return current_user
 
 
+async def get_current_admin_user(
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    관리자 사용자 정보 반환
+    
+    Args:
+        current_user: 현재 활성 사용자 정보
+        
+    Returns:
+        관리자 사용자 정보
+        
+    Raises:
+        HTTPException: 관리자가 아닌 경우
+    """
+    if not current_user.get("is_superuser", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다"
+        )
+    return current_user
+
+
 async def get_db():
     """
     비동기 데이터베이스 세션 의존성

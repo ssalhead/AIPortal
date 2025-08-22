@@ -6,11 +6,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 import logging
 import sys
 import time
+import os
+from pathlib import Path
 
 from app.core.config import settings
 from app.core.exceptions import AIPortalException
@@ -173,9 +176,23 @@ async def health_check():
     )
 
 
+# 정적 파일 서빙을 위한 디렉토리 설정
+uploads_dir = Path(settings.UPLOAD_DIR if hasattr(settings, 'UPLOAD_DIR') else './uploads')
+generated_images_dir = uploads_dir / "generated_images"
+
+# 디렉토리가 존재하지 않으면 생성
+generated_images_dir.mkdir(parents=True, exist_ok=True)
+
 # API v1 라우터 포함
 from app.api.v1.api import api_router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# 정적 파일 마운트 - 생성된 이미지 서빙
+app.mount(
+    "/api/v1/images/generated", 
+    StaticFiles(directory=str(generated_images_dir)), 
+    name="generated_images"
+)
 
 
 if __name__ == "__main__":

@@ -3,10 +3,12 @@ AI 에이전트 서비스
 """
 
 from typing import Dict, Any, List, AsyncGenerator
-import logging
 import asyncio
+import re
 from datetime import datetime
 from app.utils.timezone import now_kst
+from app.utils.logger import get_logger
+from app.utils.streaming import split_response_into_natural_chunks, StreamingConfig
 
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
@@ -14,7 +16,10 @@ from app.agents.workers.web_search import web_search_agent
 from app.agents.workers.canvas import canvas_agent
 from app.services.conversation_context_service import universal_context_analyzer
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+# split_long_line_into_sentences 함수 제거 - 새로운 청킹 알고리즘에서 불필요
 
 
 class AgentService:
@@ -27,6 +32,50 @@ class AgentService:
             "web_search": web_search_agent,
             "canvas": canvas_agent,
         }
+        
+        # 스트리밍 설정 (Gemini 스타일 "스르륵" 타이핑 효과)
+        self.streaming_config = StreamingConfig()
+    
+    async def _fallback_general_chat(self, message: str, model: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        에이전트 실패 시 fallback 일반 채팅
+        
+        Args:
+            message: 사용자 메시지
+            model: 사용할 LLM 모델
+        
+        Yields:
+            스트리밍 청크 이벤트들
+        """
+        try:
+            from app.agents.llm_router import llm_router
+            
+            logger.info(f"🛡️ Fallback 일반 채팅 시작 - 모델: {model}")
+            
+            chunk_count = 0
+            fallback_response = ""
+            
+            async for chunk in llm_router.stream_response(model, message):
+                chunk_count += 1
+                fallback_response += chunk
+                
+                yield {"type": "chunk", "data": {
+                    "text": chunk,
+                    "index": chunk_count - 1,
+                    "is_final": False
+                }}
+                
+            logger.info(f"🛡️ Fallback 채팅 완료 - 청크: {chunk_count}, 길이: {len(fallback_response)}")
+            
+        except Exception as e:
+            logger.error(f"❌ Fallback 채팅도 실패: {e}")
+            # 최종 fallback: 정적 오류 메시지
+            error_message = f"죄송합니다. 요청 처리 중 오류가 발생했습니다. (모델: {model})"
+            yield {"type": "chunk", "data": {
+                "text": error_message,
+                "index": 0,
+                "is_final": True
+            }}
     
     async def execute_chat(
         self, 
@@ -158,7 +207,7 @@ class AgentService:
                     raise ValueError(f"알 수 없는 에이전트 타입: {agent_type}")
                 result = await agent.execute(agent_input, selected_model, progress_callback)
             
-            # AI 응답을 대화 히스토리에 추가 (citations/sources 메타데이터 포함)
+            # AI 응답을 대화 히스토리에 추가 (citations/sources/canvas_data 메타데이터 포함)
             response_metadata = {}
             
             # 에이전트 결과에서 citations와 sources 정보 추출
@@ -170,6 +219,9 @@ class AgentService:
                 response_metadata['search_results'] = result.search_results
             if hasattr(result, 'metadata') and result.metadata:
                 response_metadata.update(result.metadata)
+            
+            # canvas_data 추출
+            canvas_data = getattr(result, 'canvas_data', None)
                 
             async with AsyncSessionLocal() as db:
                 await conversation_history_service.add_message(
@@ -179,7 +231,8 @@ class AgentService:
                     content=result.result,
                     session=db,
                     model=result.model_used,
-                    metadata_=response_metadata if response_metadata else None
+                    metadata_=response_metadata if response_metadata else None,
+                    canvas_data=canvas_data
                 )
             
             # 새 대화인 경우 제목 자동 생성 (첫 번째 메시지인지 확인)
@@ -232,6 +285,7 @@ class AgentService:
                 "execution_time_ms": result.execution_time_ms,
                 "citations": getattr(result, 'citations', []),  # citations 추가
                 "sources": getattr(result, 'sources', []),  # sources 추가
+                "canvas_data": getattr(result, 'canvas_data', None),  # Canvas 데이터 추가
                 "messages": messages,  # 전체 대화 메시지 포함
                 "user_message": message  # 현재 사용자 메시지도 포함 (프론트엔드 참조용)
             }
@@ -493,64 +547,182 @@ class AgentService:
                 conversation_context=conversation_context  # 새로운 맥락 정보 추가
             )
             
-            # 에이전트 선택 및 실행 (execute_chat과 동일한 로직 적용)
-            full_response = ""
+            # 에이전트 선택 및 실행 - 스트리밍 응답 실시간 축적 방식
+            streamed_response = ""  # 스트리밍으로 생성된 실제 응답을 축적
             chunk_count = 0
             citations = []
             sources = []
             
             if agent_type == "none" or agent_type == "auto" or agent_type == "supervisor":
-                # Supervisor가 자동으로 적절한 에이전트 선택
+                # Supervisor가 완전한 응답 생성 후 청크로 분할하여 스트리밍 (이중 LLM 호출 완전 제거)
+                logger.info(f"🤖 Supervisor 에이전트 실행 시작 - 모델: {selected_model}")
                 result = await self.supervisor.execute(agent_input, selected_model, progress_callback)
                 
                 # 결과에서 citations/sources 추출
                 citations = getattr(result, 'citations', [])
                 sources = getattr(result, 'sources', [])
-                full_response = result.result
+                complete_response = result.result  # 에이전트가 생성한 완전한 응답
                 
-                # 응답을 청크로 스트리밍 시뮬레이션
-                import asyncio
-                words = full_response.split()
-                for i, word in enumerate(words):
-                    chunk = word + (" " if i < len(words) - 1 else "")
+                logger.info(f"🔪 Supervisor 응답 청킹 시작 - 응답 길이: {len(complete_response)}")
+                
+                # 에이전트 응답을 자연스러운 청크로 분할
+                response_chunks = split_response_into_natural_chunks(
+                    complete_response, 
+                    self.streaming_config.get("chunk_size_range")
+                )
+                
+                # 청크 분할 검증 로깅 (안전성 확인)
+                chunk_total_length = sum(len(chunk) for chunk in response_chunks)
+                logger.info(f"🔍 Supervisor 청크 분할 검증 - 원본: {len(complete_response)}자, 청크 합계: {chunk_total_length}자, 청크 수: {len(response_chunks)}")
+                
+                # 각 청크 정보 로깅
+                for i, chunk in enumerate(response_chunks[:5]):  # 처음 5개만 로깅
+                    logger.info(f"📝 청크 #{i+1}: {len(chunk)}자 - {repr(chunk[:50])}{'...' if len(chunk) > 50 else ''}")
+                
+                # 청크별로 스트리밍 전송 (자연스러운 타이핑 효과)
+                for i, chunk in enumerate(response_chunks):
                     chunk_count += 1
+                    streamed_response += chunk  # 동일한 내용 축적
+                    
+                    logger.info(f"📡 Supervisor 청크 #{i+1}/{len(response_chunks)} 전송: {len(chunk)}자")
                     
                     yield {"type": "chunk", "data": {
                         "text": chunk,
-                        "index": chunk_count - 1,
+                        "index": i,
                         "is_final": False
                     }}
-                    await asyncio.sleep(0.03)  # 자연스러운 타이핑 효과
+                    
+                    # Gemini 스타일 "스르륵" 흐름 딜레이
+                    import random
+                    if chunk.strip():  # 빈 청크가 아닌 경우만
+                        # 적응형 속도 조절 (텍스트 길이에 따라)
+                        if self.streaming_config.get("adaptive_speed", False):
+                            # 청크가 작을수록 빠르게, 클수록 조금 느리게
+                            speed_factor = max(0.5, 1.0 - (len(chunk) / 20))
+                        else:
+                            speed_factor = 1.0
+                        
+                        # 기본 딜레이 + 글자수 기반 추가 딜레이
+                        base_delay = random.uniform(*self.streaming_config.get("base_delay_range")) * speed_factor
+                        character_delay = len(chunk) * self.streaming_config.get("character_delay")
+                        
+                        # 흐름 가속 효과 (연속된 청크일수록 빨라짐)
+                        if self.streaming_config.get("flow_acceleration", False) and i > 3:
+                            acceleration_factor = max(0.7, 1.0 - (i * 0.02))  # 점진적 가속
+                            base_delay *= acceleration_factor
+                        
+                        total_delay = base_delay + character_delay
+                        
+                        # 한글/영문에 따른 미세 조정
+                        korean_chars = sum(1 for c in chunk if ord(c) >= 0xAC00 and ord(c) <= 0xD7A3)
+                        if korean_chars > 0:
+                            # 한글은 조금 더 천천히 (가독성)
+                            total_delay *= 1.1
+                        
+                        # 공백이 있으면 단어 간 일시정지 추가
+                        if ' ' in chunk:
+                            word_count = chunk.count(' ')
+                            total_delay += word_count * self.streaming_config.get("word_pause")
+                        
+                        await asyncio.sleep(min(total_delay, 0.08))  # 최대 80ms (더 빠르게)
+                    
+                    # 문장 끝 일시정지 (더 자연스럽게)
+                    if chunk.rstrip().endswith(('.', '!', '?')):
+                        await asyncio.sleep(self.streaming_config.get("sentence_pause"))
+                    elif chunk.endswith('\n\n'):
+                        await asyncio.sleep(self.streaming_config.get("paragraph_pause"))
                     
             else:
                 # 특정 에이전트 직접 실행
                 agent = self.agents.get(agent_type)
                 if agent:
+                    logger.info(f"🤖 {agent_type} 에이전트 실행 시작 - 모델: {selected_model}")
                     result = await agent.execute(agent_input, selected_model, progress_callback)
                     
                     # 결과에서 citations/sources 추출
                     citations = getattr(result, 'citations', [])
                     sources = getattr(result, 'sources', [])
-                    full_response = result.result
+                    complete_response = result.result  # 에이전트가 생성한 완전한 응답
                     
-                    # 응답을 청크로 스트리밍 시뮬레이션
-                    import asyncio
-                    words = full_response.split()
-                    for i, word in enumerate(words):
-                        chunk = word + (" " if i < len(words) - 1 else "")
+                    logger.info(f"🔪 {agent_type} 응답 청킹 시작 - 응답 길이: {len(complete_response)}")
+                    
+                    # 에이전트 응답을 자연스러운 청크로 분할
+                    response_chunks = split_response_into_natural_chunks(
+                        complete_response, 
+                        self.streaming_config.get("chunk_size_range")
+                    )
+                    
+                    # 청크 분할 검증 로깅 (안전성 확인)
+                    chunk_total_length = sum(len(chunk) for chunk in response_chunks)
+                    logger.info(f"🔍 {agent_type} 청크 분할 검증 - 원본: {len(complete_response)}자, 청크 합계: {chunk_total_length}자, 청크 수: {len(response_chunks)}")
+                    
+                    # 각 청크 정보 로깅
+                    for i, chunk in enumerate(response_chunks[:5]):  # 처음 5개만 로깅
+                        logger.info(f"📝 청크 #{i+1}: {len(chunk)}자 - {repr(chunk[:50])}{'...' if len(chunk) > 50 else ''}")
+                    
+                    # 청크별로 스트리밍 전송 (자연스러운 타이핑 효과)
+                    for i, chunk in enumerate(response_chunks):
                         chunk_count += 1
+                        streamed_response += chunk  # 동일한 내용 축적
+                        
+                        logger.info(f"📡 {agent_type} 청크 #{i+1}/{len(response_chunks)} 전송: {len(chunk)}자")
                         
                         yield {"type": "chunk", "data": {
                             "text": chunk,
-                            "index": chunk_count - 1,
+                            "index": i,
                             "is_final": False
                         }}
-                        await asyncio.sleep(0.03)  # 자연스러운 타이핑 효과
+                        
+                        # Gemini 스타일 "스르륵" 흐름 딜레이
+                        import random
+                        if chunk.strip():  # 빈 청크가 아닌 경우만
+                            # 적응형 속도 조절 (텍스트 길이에 따라)
+                            if self.streaming_config.get("adaptive_speed", False):
+                                # 청크가 작을수록 빠르게, 클수록 조금 느리게
+                                speed_factor = max(0.5, 1.0 - (len(chunk) / 20))
+                            else:
+                                speed_factor = 1.0
+                            
+                            # 기본 딜레이 + 글자수 기반 추가 딜레이
+                            base_delay = random.uniform(*self.streaming_config.get("base_delay_range")) * speed_factor
+                            character_delay = len(chunk) * self.streaming_config.get("character_delay")
+                            
+                            # 흐름 가속 효과 (연속된 청크일수록 빨라짐)
+                            if self.streaming_config.get("flow_acceleration", False) and i > 3:
+                                acceleration_factor = max(0.7, 1.0 - (i * 0.02))  # 점진적 가속
+                                base_delay *= acceleration_factor
+                            
+                            total_delay = base_delay + character_delay
+                            
+                            # 한글/영문에 따른 미세 조정
+                            korean_chars = sum(1 for c in chunk if ord(c) >= 0xAC00 and ord(c) <= 0xD7A3)
+                            if korean_chars > 0:
+                                # 한글은 조금 더 천천히 (가독성)
+                                total_delay *= 1.1
+                            
+                            # 공백이 있으면 단어 간 일시정지 추가
+                            if ' ' in chunk:
+                                word_count = chunk.count(' ')
+                                total_delay += word_count * self.streaming_config.get("word_pause")
+                            
+                            await asyncio.sleep(min(total_delay, 0.08))  # 최대 80ms (더 빠르게)
+                        
+                        # 문장 끝 일시정지 (더 자연스럽게)
+                        if chunk.rstrip().endswith(('.', '!', '?')):
+                            await asyncio.sleep(self.streaming_config.get("sentence_pause"))
+                        elif chunk.endswith('\n\n'):
+                            await asyncio.sleep(self.streaming_config.get("paragraph_pause"))
                 else:
-                    # 에이전트를 찾을 수 없으면 일반 채팅으로 fallback
+                    # 에이전트를 찾을 수 없으면 일반 채팅으로 실제 LLM 스트리밍 (유지)
+                    logger.info(f"💬 일반 채팅 모드 - 직접 LLM 스트리밍: {selected_model}")
+                    logger.debug(f"🎯 일반 채팅 프롬프트: {enhanced_message[:100]}{'...' if len(enhanced_message) > 100 else ''}")
+                    
+                    # 일반 채팅은 실제 LLM 스트리밍 유지 (에이전트 대체 모드)
                     async for chunk in llm_router.stream_response(selected_model, enhanced_message):
                         chunk_count += 1
-                        full_response += chunk
+                        streamed_response += chunk  # 실시간 축적
+                        
+                        logger.debug(f"📝 일반 채팅 청크 및 축적: {repr(chunk[:50])}{'...' if len(chunk) > 50 else ''}")
                         
                         yield {"type": "chunk", "data": {
                             "text": chunk,
@@ -566,24 +738,55 @@ class AgentService:
                     "is_final": True
                 }}
             
-            # AI 응답을 대화 히스토리에 추가 (citations/sources 메타데이터 포함)
-            response_metadata = {"streaming": True, "chunk_count": chunk_count}
+            # 에이전트 응답과 스트리밍 응답의 완전 일치 확인 및 DB 저장
+            response_metadata = {"streaming": True, "chunk_count": chunk_count, "response_method": "agent_chunked"}
             
             # 에이전트 결과에서 citations와 sources 정보 추가
             if citations:
                 response_metadata['citations'] = citations
             if sources:
                 response_metadata['sources'] = sources
+            
+            # canvas_data 추출 (스트리밍에서도 캔버스 데이터 저장)
+            canvas_data = None
+            if 'result' in locals() and hasattr(result, 'canvas_data'):
+                canvas_data = getattr(result, 'canvas_data', None)
+                if canvas_data:
+                    logger.info(f"🎨 스트리밍 모드에서 Canvas 데이터 추출 성공 - 타입: {canvas_data.get('type', 'unknown')}")
+                else:
+                    logger.debug("🎨 스트리밍 모드에서 Canvas 데이터 없음")
+                
+            # 실제 에이전트 응답과 스트리밍 응답 비교 로깅
+            if 'complete_response' in locals():  # 에이전트 모드인 경우
+                original_length = len(complete_response)
+                streamed_length = len(streamed_response)
+                is_identical = complete_response == streamed_response
+                
+                logger.info(f"🔄 응답 일치 확인 - 원본: {original_length}자, 스트리밍: {streamed_length}자, 동일: {is_identical}")
+                
+                if not is_identical:
+                    logger.warning(f"⚠️ 응답 불일치 감지! 원본 사용")
+                    # 원본 에이전트 응답을 DB에 저장 (안전 대비)
+                    final_response = complete_response
+                else:
+                    final_response = streamed_response
+            else:
+                # 일반 채팅 모드인 경우
+                final_response = streamed_response
+                
+            logger.info(f"💾 스트리밍 응답 DB 저장 - 길이: {len(final_response)}, 실제 전송 청크: {chunk_count}")
+            logger.info(f"💾 저장할 응답 내용 (처음 100자): {final_response[:100]}{'...' if len(final_response) > 100 else ''}")
                 
             async with AsyncSessionLocal() as db:
                 await conversation_history_service.add_message(
                     conversation_id=session_id,
                     user_id=user_id,
                     role=MessageRole.ASSISTANT,
-                    content=full_response,
+                    content=final_response,  # 에이전트 원본 또는 스트리밍 응답 (동일함 보장)
                     session=db,
                     model=selected_model,
-                    metadata_=response_metadata
+                    metadata_=response_metadata,
+                    canvas_data=canvas_data
                 )
             
             # 새 대화인 경우 제목 자동 생성 (첫 번째 메시지인지 확인)
@@ -657,9 +860,16 @@ class AgentService:
                 "context_applied": bool(conversation_context_text)
             }}
             
+            # Canvas 데이터 추출 (에이전트 결과에서)
+            canvas_data_for_response = None
+            if 'result' in locals() and hasattr(result, 'canvas_data'):
+                canvas_data_for_response = result.canvas_data
+                if canvas_data_for_response:
+                    logger.info(f"🎨 스트리밍 응답에서 Canvas 데이터 전송 - 타입: {canvas_data_for_response.get('type', 'unknown')}")
+            
             # 최종 완료 결과 전송
             yield {"type": "result", "data": {
-                "response": full_response,
+                "response": final_response,
                 "agent_used": actual_agent_used,
                 "model_used": selected_model,
                 "timestamp": now_kst().isoformat(),
@@ -668,7 +878,8 @@ class AgentService:
                 "citations": citations,
                 "sources": sources,
                 "citation_stats": citation_stats,
-                "metadata": response_metadata
+                "metadata": response_metadata,
+                "canvas_data": canvas_data_for_response  # Canvas 데이터 추가
             }}
             
             yield {"type": "end", "data": {"message": "대화 처리가 완료되었습니다."}}

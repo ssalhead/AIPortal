@@ -11,6 +11,7 @@ from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.agents.llm_router import llm_router
 from app.agents.workers.web_search import web_search_agent
 from app.agents.workers.information_gap_analyzer import information_gap_analyzer
+from app.agents.workers.canvas import canvas_agent
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class SupervisorAgent(BaseAgent):
         # Worker 에이전트 등록 (information_gap_analyzer는 내부 로직으로 사용)
         self.workers = {
             TaskType.WEB_SEARCH: web_search_agent,
+            TaskType.CANVAS: canvas_agent,
             # TaskType.DEEP_RESEARCH: deep_search_agent,  # 추후 구현
             # TaskType.MULTIMODAL_RAG: multimodal_rag_agent,  # 추후 구현
         }
@@ -95,7 +97,9 @@ class SupervisorAgent(BaseAgent):
             
             if worker_agent:
                 # Worker 에이전트 실행 (progress_callback 전달)
-                self.logger.info(f"작업을 {task_type.value} 에이전트에게 위임")
+                self.logger.info(f"🎯 작업을 {task_type.value} 에이전트에게 위임 - 에이전트 ID: {worker_agent.agent_id}")
+                if task_type == TaskType.CANVAS:
+                    self.logger.info(f"🎨 Canvas 에이전트 실행 시작 - 쿼리: {input_data.query[:100]}...")
                 result = await worker_agent.execute(input_data, model, progress_callback)
                 
                 # Supervisor 메타데이터 추가
@@ -142,8 +146,9 @@ class SupervisorAgent(BaseAgent):
    - 다각도 검토 (장단점 분석, 트렌드 분석)
 
 3. **canvas** - 시각적 창작:
-   - 이미지 생성 ("그려줘", "만들어줘", "디자인")
-   - 다이어그램 ("마인드맵", "차트", "그래프", "시각화")
+   - 이미지 생성 ("그려줘", "만들어줘", "디자인", "이미지 생성", "사진", "그림", "일러스트", "AI 이미지")
+   - 다이어그램 ("마인드맵", "차트", "그래프", "시각화", "도표")
+   - 시각적 콘텐츠 ("포스터", "로고", "배경", "캐릭터", "풍경")
 
 4. **general_chat** - 일반 대화:
    - 기본 지식 질문 (개념 설명, 정의, 방법)
@@ -252,8 +257,13 @@ class SupervisorAgent(BaseAgent):
     def _smart_fallback_analysis(self, query: str) -> TaskType:
         """단순화된 fallback 분석 - LLM 실패 시에만 사용"""
         # Canvas 관련 키워드 (명확한 시각적 요청)
-        canvas_keywords = ["그려", "만들어", "생성", "시각화", "차트", "그래프", "다이어그램", "마인드맵", "그림", "이미지"]
-        if any(k in query for k in canvas_keywords):
+        canvas_keywords = [
+            "그려", "만들어", "생성", "시각화", "차트", "그래프", "다이어그램", "마인드맵", "그림", "이미지",
+            "디자인", "포스터", "로고", "배경", "캐릭터", "풍경", "일러스트", "사진", "AI 이미지"
+        ]
+        matched_keywords = [k for k in canvas_keywords if k in query]
+        if matched_keywords:
+            self.logger.info(f"🎨 Canvas 키워드 감지 (fallback) - 매칭 키워드: {matched_keywords}, 쿼리: {query[:50]}...")
             return TaskType.CANVAS
         
         # 명확한 검색 요청 키워드

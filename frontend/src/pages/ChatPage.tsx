@@ -18,32 +18,13 @@ import { apiService } from '../services/api';
 import { conversationHistoryService } from '../services/conversationHistoryService';
 import { agentSuggestionService } from '../services/agentSuggestionService';
 import { Star, Zap } from 'lucide-react';
-import type { LLMModel, AgentType, Citation, Source, LLMProvider, ChatResponse } from '../types';
+import type { LLMModel, AgentType, Citation, Source, LLMProvider, ChatResponse, Message, StreamingProgressMetadata, CanvasData } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
 import { CANVAS_SPLIT } from '../constants/layout';
 import type { SearchResult } from '../components/search/SearchResultsCard';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 
-interface Message {
-  id: string;
-  content: string;
-  isUser: boolean;
-  timestamp: string;
-  agentType?: string;
-  model?: string;
-  citations?: Citation[];
-  sources?: Source[];
-  searchResults?: SearchResult[];
-  searchQuery?: string;
-  originalQuery?: string;
-  hasContext?: boolean;
-  searchStatus?: {
-    isSearching: boolean;
-    currentStep: string;
-    progress: number;
-  };
-}
 
 export const ChatPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -79,7 +60,7 @@ export const ChatPage: React.FC = () => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const queryClient = useQueryClient();
-  const { clearCanvas } = useCanvasStore();
+  const { clearCanvas, autoActivateCanvas, hasActiveContent, isCanvasOpen, closeCanvas } = useCanvasStore();
 
   // 대화 기록 로딩
   const { data: chatHistoryData, refetch: refetchHistory } = useQuery({
@@ -129,9 +110,15 @@ export const ChatPage: React.FC = () => {
       const previousConversations = queryClient.getQueryData(['conversations']);
       
       // 낙관적 업데이트: 삭제된 대화를 즉시 목록에서 제거
-      queryClient.setQueryData(['conversations'], (old: any[]) => 
-        old ? old.filter(conv => conv.id !== deletedConversationId) : []
-      );
+      queryClient.setQueryData(['conversations'], (old: unknown) => {
+        if (!Array.isArray(old)) return [];
+        return old.filter((conv: unknown) => 
+          typeof conv === 'object' && 
+          conv !== null && 
+          'id' in conv && 
+          conv.id !== deletedConversationId
+        );
+      });
       
       return { previousConversations };
     },
@@ -181,19 +168,70 @@ export const ChatPage: React.FC = () => {
   // 대화 로드 함수 분리 (재사용성을 위해)
   const loadConversation = async (conversationId: string) => {
     try {
+      // Canvas 닫기
+      closeCanvas();
+      
       const conversation = await conversationHistoryService.getConversationDetail(conversationId);
       
+      // API 응답 전체 디버깅
+      console.log('🔍 API 응답 전체:', conversation);
+      console.log('🔍 메시지 배열:', conversation?.messages);
+      if (conversation?.messages?.length > 0) {
+        console.log('🔍 첫 번째 메시지 샘플:', conversation.messages[0]);
+        console.log('🔍 첫 번째 메시지 키들:', Object.keys(conversation.messages[0]));
+      }
+      
       // 메시지를 UI 형식으로 변환
-      const formattedMessages: Message[] = conversation.messages.map((msg: any, index: number) => ({
-        id: msg.id || `msg-${index}`,
-        content: msg.content,
-        isUser: msg.role === 'USER',
-        timestamp: msg.created_at,
-        model: msg.model,
-        agentType: conversation.agent_type,
-        citations: [],
-        sources: []
-      }));
+      const formattedMessages: Message[] = conversation.messages.map((msg: unknown, index: number) => {
+        // 타입 가드로 안전한 접근
+        if (typeof msg !== 'object' || msg === null) return null;
+        const message = msg as Record<string, unknown>;
+        
+        // Canvas 데이터 로딩 디버깅 (상세) - 강화
+        console.log(`🔍 메시지 처리 중 - ID: ${message.id}, Role: ${message.role}, Index: ${index}`);
+        console.log(`🔍 메시지 객체 타입: ${typeof message}, 객체인가: ${typeof message === 'object'}`);
+        console.log(`🔍 메시지 키들:`, Object.keys(message));
+        
+        const canvasData = message.canvas_data;
+        console.log(`🔍 canvas_data 접근 결과:`, canvasData);
+        console.log(`🔍 canvas_data 타입:`, typeof canvasData);
+        
+        if (canvasData) {
+          console.log(`🎨 Canvas 데이터 로딩 성공 - 메시지 ID: ${message.id}, 타입: ${(canvasData as any)?.type}`, canvasData);
+          console.log(`✅ Canvas 데이터가 Message 객체의 canvasData 필드로 전달됩니다.`);
+        } else if (message.role === 'ASSISTANT') {
+          console.log(`❌ Canvas 데이터 없음 - 메시지 ID: ${message.id}, 사용 가능한 키:`, Object.keys(message));
+          
+          // 직접 키 확인
+          if ('canvas_data' in message) {
+            console.log(`🔍 'canvas_data' 키는 존재함, 값:`, message.canvas_data);
+          } else {
+            console.log(`🔍 'canvas_data' 키가 존재하지 않음`);
+          }
+          
+          // metadata에서 canvas_data가 있는지 확인
+          const metadata = message.metadata_;
+          if (metadata && typeof metadata === 'object') {
+            const metadataKeys = Object.keys(metadata);
+            console.log(`🔍 metadata에서 찾은 키:`, metadataKeys);
+            if ('canvas_data' in metadata) {
+              console.log(`🎨 metadata에서 canvas_data 발견:`, (metadata as any).canvas_data);
+            }
+          }
+        }
+        
+        return {
+          id: (typeof message.id === 'string' ? message.id : `msg-${index}`),
+          content: (typeof message.content === 'string' ? message.content : ''),
+          isUser: message.role === 'USER',
+          timestamp: (typeof message.created_at === 'string' ? message.created_at : new Date().toISOString()),
+          model: (typeof message.model === 'string' ? message.model : undefined),
+          agentType: (typeof conversation.agent_type === 'string' ? conversation.agent_type : undefined),
+          citations: [],
+          sources: [],
+          canvasData: message.canvas_data || undefined  // Canvas 데이터 포함
+        };
+      }).filter((msg): msg is Message => msg !== null);
       
       setMessages(formattedMessages);
       setCurrentSessionId(conversationId);
@@ -252,16 +290,20 @@ export const ChatPage: React.FC = () => {
       
       if (response.agent_used === 'web_search' && response.citations) {
         searchQuery = variables.message; // 원본 사용자 쿼리를 검색 쿼리로 사용
-        searchResults = response.citations.map((citation: any, index: number) => ({
-          id: citation.id || `search_${index + 1}`,
-          title: citation.title || '제목 없음',
-          url: citation.url || '',
-          snippet: citation.snippet || '',
-          source: citation.source || 'unknown',
-          score: citation.score || 0.8,
-          timestamp: response.timestamp,
-          provider: citation.source?.split('_')[0] || 'unknown'
-        }));
+        searchResults = response.citations.map((citation: unknown, index: number) => {
+          if (typeof citation !== 'object' || citation === null) return null;
+          const cite = citation as Record<string, unknown>;
+          
+          return {
+            id: (typeof cite.id === 'string' ? cite.id : `search_${index + 1}`),
+            title: (typeof cite.title === 'string' ? cite.title : '제목 없음'),
+            url: (typeof cite.url === 'string' ? cite.url : ''),
+            snippet: (typeof cite.snippet === 'string' ? cite.snippet : ''),
+            domain: (typeof cite.source === 'string' ? cite.source : 'unknown'),
+            relevanceScore: (typeof cite.score === 'number' ? cite.score : 0.8),
+            publishedDate: response.timestamp
+          };
+        }).filter((result): result is SearchResult => result !== null);
         
         // 디버그용 로그 추가
         console.log('웹 검색 결과:', {
@@ -271,6 +313,20 @@ export const ChatPage: React.FC = () => {
           searchQuery,
           sample_citation: response.citations?.[0]
         });
+      }
+
+      // Canvas 데이터 처리 및 자동 활성화
+      console.log('🔍 응답 전체 확인:', response);
+      console.log('🔍 canvas_data 여부:', !!response.canvas_data);
+      
+      if (response.canvas_data) {
+        console.log('🎨 Canvas 데이터 감지:', response.canvas_data);
+        
+        // 새로운 자동 활성화 시스템 사용
+        const artifactId = autoActivateCanvas(response.canvas_data);
+        console.log('🎨 Canvas 자동 활성화 완료, Artifact ID:', artifactId);
+      } else {
+        console.log('🔍 canvas_data가 없습니다');
       }
 
       // AI 응답만 추가 (사용자 메시지는 이미 표시됨)
@@ -284,7 +340,8 @@ export const ChatPage: React.FC = () => {
         citations: response.citations || [],
         sources: response.sources || [],
         searchResults: searchResults,
-        searchQuery: searchQuery
+        searchQuery: searchQuery,
+        canvasData: response.canvas_data // Canvas 데이터 추가
       };
       
       console.log('🔍 일반채팅 - AI 응답 추가:', aiResponse);
@@ -292,7 +349,7 @@ export const ChatPage: React.FC = () => {
       console.log('🔍 일반채팅 - AI 응답 추가 완료');
       // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       // 타이핑 상태 종료
       stopTyping();
 ;
@@ -330,7 +387,7 @@ export const ChatPage: React.FC = () => {
   }, [messages]);
 
   // 진행 상태 메시지 매핑
-  const getProgressMessage = (stepId?: string, metadata?: any): string => {
+  const getProgressMessage = (stepId?: string, metadata?: StreamingProgressMetadata): string => {
     switch (stepId) {
       case 'query_analysis':
         return '🔍 검색어를 분석하는 중...';
@@ -356,6 +413,25 @@ export const ChatPage: React.FC = () => {
   // 에이전트 제안 분석
   const analyzeAgentSuggestion = async (message: string, currentAgent: AgentType, model: LLMModel) => {
     try {
+      // 🎨 이미지 생성 요청 자동 감지
+      const imageKeywords = [
+        '그려', '그림', '이미지', '사진', '일러스트', '만들어', '생성', '디자인', 
+        '캐릭터', '로고', '포스터', '배경', '풍경', 'AI 이미지', '시각화'
+      ];
+      
+      const hasImageRequest = imageKeywords.some(keyword => message.includes(keyword));
+      
+      if (hasImageRequest && currentAgent === 'none') {
+        // 이미지 생성 요청 감지 시 Canvas를 바로 활성화 (제안 모달 없이)
+        console.log('🎨 이미지 생성 키워드 감지 - Canvas 모드로 자동 전환:', message);
+        
+        // Canvas 강제 활성화 
+        setSelectedAgent('canvas');
+        
+        await processSendMessage(message, model, 'canvas');
+        return true; // 자동 처리됨을 반환
+      }
+
       const suggestion = await agentSuggestionService.analyzeSuggestionWithTypes(
         message,
         currentAgent,
@@ -430,6 +506,7 @@ export const ChatPage: React.FC = () => {
 
   // 실제 메시지 전송 로직 (기존 handleSendMessage 내용)
   const processSendMessage = async (message: string, model: LLMModel, agentType: AgentType) => {
+    console.log(`📤 메시지 전송 - 에이전트: ${agentType}, 모델: ${model}, 메시지: ${message.slice(0, 50)}...`);
     // 🔥 사용자 메시지 즉시 표시 (기존 UX 복원)
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -481,7 +558,7 @@ export const ChatPage: React.FC = () => {
                 include_citations: true,
               },
               // 진행 상태 콜백 - 간단한 메시지만 업데이트
-              (step: string, progress: number, metadata?: any) => {
+              (step: string, progress: number, metadata?: StreamingProgressMetadata) => {
                 console.log('🚀 실제 진행 상태 수신:', step, progress, metadata);
                 
                 // 백엔드에서 제공한 step_id 사용
@@ -535,6 +612,17 @@ export const ChatPage: React.FC = () => {
               // 최종 결과 콜백
               (result: ChatResponse) => {
                 console.log('✅ 최종 결과 수신:', result);
+                console.log('🔍 canvas_data 확인:', !!result.canvas_data);
+                
+                // Canvas 데이터 처리 (스트리밍 모드)
+                if (result.canvas_data) {
+                  console.log('🎨 스트리밍에서 Canvas 데이터 감지:', result.canvas_data);
+                  
+                  // 새로운 자동 활성화 시스템 사용
+                  const artifactId = autoActivateCanvas(result.canvas_data);
+                  console.log('🎨 스트리밍에서 Canvas 자동 활성화 완료, Artifact ID:', artifactId);
+                }
+                
                 finalResponse = result;
                 resolve(); // Promise 완료 신호
               },
@@ -617,16 +705,21 @@ export const ChatPage: React.FC = () => {
             console.log('원본 검색어 사용:', searchQuery);
           }
           
-          searchResults = response.citations.map((citation: any, index: number) => ({
-            id: citation.id || `search_${index + 1}`,
-            title: citation.title || '제목 없음',
-            url: citation.url || '',
-            snippet: citation.snippet || '',
-            source: citation.source || 'unknown',
-            score: citation.score || 0.8,
-            timestamp: response.timestamp,
-            provider: citation.source?.split('_')[0] || 'unknown'
-          }));
+          searchResults = response.citations.map((citation: unknown, index: number) => {
+            if (typeof citation !== 'object' || citation === null) return null;
+            const cite = citation as Record<string, unknown>;
+            
+            return {
+              id: cite.id || `search_${index + 1}`,
+              title: cite.title || '제목 없음',
+              url: cite.url || '',
+              snippet: cite.snippet || '',
+              source: cite.source || 'unknown',
+              score: cite.score || 0.8,
+              timestamp: response.timestamp,
+              provider: cite.source?.split('_')[0] || 'unknown'
+            };
+          }).filter((result): result is SearchResult => result !== null);
           
           console.log('웹 검색 결과 변환 완료:', {
             searchQuery,
@@ -650,7 +743,8 @@ export const ChatPage: React.FC = () => {
           searchResults: searchResults,
           searchQuery: searchQuery,
           originalQuery: hasContext ? message : undefined,
-          hasContext: hasContext
+          hasContext: hasContext,
+          canvasData: response.canvas_data // Canvas 데이터 추가
         };
         
         console.log('🔍 웹검색 - AI 응답 추가:', aiResponse);
@@ -669,15 +763,16 @@ export const ChatPage: React.FC = () => {
         console.log('🔍 웹검색 - AI 응답 추가 완료');
         // 성공 토스트는 제거 - 메시지가 화면에 나타나는 것으로 충분
         
-      } catch (error: any) {
+      } catch (error: unknown) {
         // 진행 상태 및 타이핑 인디케이터 종료
         setCurrentProgressMessage('');
         stopTyping();
         
         // 에러 메시지 추가
+        const errorText = error instanceof Error ? error.message : '메시지 처리 중 오류가 발생했습니다.';
         const errorMessage: Message = {
           id: `error-${Date.now()}`,
-          content: '죄송합니다. 메시지 처리 중 오류가 발생했습니다.',
+          content: `죄송합니다. ${errorText}`,
           isUser: false,
           timestamp: new Date().toISOString(),
           agentType: 'error',
@@ -704,10 +799,8 @@ export const ChatPage: React.FC = () => {
       setMessages([]);
       setCurrentSessionId(sessionData.session_id);
       
-      // Canvas 상태 초기화
-      if (selectedAgent === 'canvas') {
-        clearCanvas();
-      }
+      // Canvas 닫기 (항상 실행)
+      closeCanvas();
       
       // 대화 기록 새로고침
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
@@ -721,6 +814,8 @@ export const ChatPage: React.FC = () => {
       }
     } catch (error) {
       console.error('새 채팅 생성 실패:', error);
+      // Canvas 닫기 (실패 시에도)
+      closeCanvas();
       setMessages([]);
       setCurrentSessionId(null); // 실패 시 세션 없이 시작
       showInfo('새 대화를 시작합니다.');
@@ -813,21 +908,33 @@ export const ChatPage: React.FC = () => {
                 console.log('🔄 기존 currentSessionId:', currentSessionId);
                 console.log('🔄 기존 메시지 수:', messages.length);
                 
+                // Canvas 닫기
+                closeCanvas();
+                
                 // 선택된 대화의 메시지 로드
                 const conversation = await conversationHistoryService.getConversationDetail(conversationId);
                 console.log('🔄 로드된 대화 데이터:', conversation);
                 
-                // 메시지를 UI 형식으로 변환
-                const formattedMessages: Message[] = conversation.messages.map(msg => ({
-                  id: msg.id,
-                  content: msg.content,
-                  isUser: msg.role === 'USER',
-                  timestamp: msg.created_at,
-                  model: msg.model,
-                  agentType: conversation.agent_type,
-                  citations: [],
-                  sources: []
-                }));
+                // 메시지를 UI 형식으로 변환 (Canvas 데이터 포함)
+                const formattedMessages: Message[] = conversation.messages.map((msg: any) => {
+                  // Canvas 데이터 변환 (히스토리 로딩)
+                  const canvasData = msg.canvas_data;
+                  if (canvasData) {
+                    console.log(`🎨 히스토리 로딩 - Canvas 데이터 발견: 메시지 ID ${msg.id}, 타입: ${canvasData.type}`, canvasData);
+                  }
+                  
+                  return {
+                    id: msg.id,
+                    content: msg.content,
+                    isUser: msg.role === 'USER',
+                    timestamp: msg.created_at,
+                    model: msg.model,
+                    agentType: conversation.agent_type,
+                    citations: [],
+                    sources: [],
+                    canvasData: msg.canvas_data || undefined  // Canvas 데이터 포함
+                  };
+                });
                 
                 console.log('🔄 변환된 메시지들:', formattedMessages);
                 setMessages(formattedMessages);
@@ -884,7 +991,7 @@ export const ChatPage: React.FC = () => {
           />
         </div>
         
-        {selectedAgent === 'canvas' && !isMobile ? (
+        {hasActiveContent() && !isMobile ? (
           <>
             {/* 리사이저블 채팅 영역 - 데스크톱만 */}
             <div 
@@ -968,6 +1075,7 @@ export const ChatPage: React.FC = () => {
                           originalQuery={msg.originalQuery}
                           hasContext={msg.hasContext}
                           citationMode={msg.agentType === 'web_search' ? 'none' : 'preview'}
+                          canvasData={msg.canvasData}
                         />
                       ))}
                       
@@ -1099,6 +1207,7 @@ export const ChatPage: React.FC = () => {
                         searchResults={msg.searchResults}
                         searchQuery={msg.searchQuery}
                         citationMode={msg.agentType === 'web_search' ? 'none' : 'preview'}
+                        canvasData={msg.canvasData}
                       />
                     ))}
                     
@@ -1154,6 +1263,13 @@ export const ChatPage: React.FC = () => {
           onDecline={handleDeclineSuggestion}
           isVisible={isShowingSuggestion}
         />
+      )}
+
+      {/* 모바일 Canvas 모달 */}
+      {hasActiveContent() && isMobile && isCanvasOpen && (
+        <div className="fixed inset-0 z-50 bg-white dark:bg-slate-900">
+          <CanvasWorkspace />
+        </div>
       )}
 
       {/* 토스트 컨테이너 */}
