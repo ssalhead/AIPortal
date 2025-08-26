@@ -25,3 +25,4 @@ class User(Base):
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
     generated_images = relationship("GeneratedImage", back_populates="user", cascade="all, delete-orphan")
+    # image_sessions = relationship("ImageGenerationSession", back_populates="user", cascade="all, delete-orphan")  # 임시 비활성화

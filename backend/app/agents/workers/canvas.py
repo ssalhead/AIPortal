@@ -189,8 +189,8 @@ JSON 형식으로 응답해주세요:
                     "progress": 30
                 })
             
-            # 이미지 생성 파라미터 추출
-            image_params = await self._extract_image_parameters(input_data.query, model)
+            # 이미지 생성 파라미터 추출 (진화 지원)
+            image_params = await self._extract_image_parameters(input_data, model)
             
             # 진행 상태 업데이트
             if progress_callback:
@@ -350,6 +350,9 @@ JSON 형식으로 응답해주세요:
             result_status = result.get('status') if isinstance(result, dict) else 'unknown'
             logger.info(f"Canvas 데이터 생성 완료: status={result_status}, images={len(images)}, urls={len(image_urls)}")
             
+            # 🔥 ImageSession 관리를 프론트엔드로 완전 이관 - 중복 생성 방지
+            logger.info("Canvas Agent - ImageSession 관리 제거됨, 프론트엔드에서 단일 소스 관리")
+            
             return AgentOutput(
                 result=canvas_response,
                 metadata={
@@ -379,13 +382,37 @@ JSON 형식으로 응답해주세요:
                 error=str(e)
             )
     
-    async def _extract_image_parameters(self, query: str, model: str) -> Dict[str, Any]:
-        """사용자 요청에서 이미지 생성 파라미터 추출"""
+    async def _extract_image_parameters(self, input_data: AgentInput, model: str) -> Dict[str, Any]:
+        """사용자 요청에서 이미지 생성 파라미터 추출 (이미지 진화 지원)"""
+        query = input_data.query
+        conversation_id = input_data.context.get('conversation_id') if input_data.context else None
+        user_id = input_data.context.get('user_id', 'anonymous') if input_data.context else 'anonymous'
+        
         try:
-            prompt = f"""
+            # 현재 선택된 이미지 컨텍스트 추출
+            selected_context = await self._get_selected_image_context(conversation_id, user_id) if conversation_id else None
+            
+            # 진화형 프롬프트 생성
+            base_prompt = f"""
 사용자의 이미지 생성 요청을 분석하여 Imagen 4 파라미터를 추출해주세요.
 
 사용자 요청: "{query}"
+"""
+            
+            # 선택된 이미지 컨텍스트 추가
+            if selected_context:
+                base_prompt += f"""
+
+**이전 이미진 컨텍스트** (참고용 - 진화/개선에 활용):
+- 이전 프롬프트: "{selected_context['prompt']}"
+- 이전 스타일: "{selected_context['style']}"
+- 이전 크기: "{selected_context['size']}"
+- 버전 번호: {selected_context['version_number']}
+
+**진화 전략**: 사용자의 새로운 요청을 이전 이미지의 컨텍스트와 결합하여 더 나은 결과를 생성하세요.
+"""
+            
+            prompt = base_prompt + f"""
 
 **추출할 파라미터**:
 1. **prompt**: 영어로 번역된 상세한 이미지 설명 (최대 400자)
@@ -411,11 +438,15 @@ num_images: [개수]
             response, _ = await llm_router.generate_response(model, prompt, include_datetime=False)
             lines = response.strip().split('\n')
             
+            # 선택된 이미지 컨텍스트에서 기본값 추출
+            default_style = selected_context['style'] if selected_context else "realistic"
+            default_size = selected_context['size'] if selected_context else "1024x1024"
+            
             # 기본값 설정
             params = {
                 "prompt": query,  # 기본값으로 원본 쿼리 사용
-                "style": "realistic",
-                "size": "1024x1024",
+                "style": default_style,
+                "size": default_size,
                 "num_images": 1
             }
             
@@ -443,10 +474,19 @@ num_images: [개수]
             
         except Exception as e:
             logger.warning(f"이미지 파라미터 추출 실패, 기본값 사용: {e}")
+            # 오류 시에도 선택된 컨텍스트 활용 시도
+            try:
+                selected_context = await self._get_selected_image_context(conversation_id, user_id) if conversation_id else None
+                default_style = selected_context['style'] if selected_context else "realistic"
+                default_size = selected_context['size'] if selected_context else "1024x1024"
+            except:
+                default_style = "realistic"
+                default_size = "1024x1024"
+            
             return {
                 "prompt": query,
-                "style": "realistic", 
-                "size": "1024x1024",
+                "style": default_style, 
+                "size": default_size,
                 "num_images": 1
             }
     
@@ -476,6 +516,12 @@ num_images: [개수]
         
         return response
     
+    # 🔥 _add_to_image_session 메서드 제거 - 중복 생성 방지
+    # ImageSession 관리는 프론트엔드에서 단일 소스로 처리
+
+    # 🔥 _get_selected_image_context 메서드 제거 - ImageSession 관리 제거
+    # 이미지 진화 기능은 프론트엔드에서 직접 처리
+
     def get_capabilities(self) -> List[str]:
         """Canvas 에이전트 기능 목록 반환"""
         return [

@@ -5,9 +5,10 @@
 
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+from uuid import UUID
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
@@ -53,8 +54,8 @@ def get_password_hash(password: str) -> str:
 class MockUser:
     """Mock 사용자 객체"""
     
-    def __init__(self):
-        self.id = settings.MOCK_USER_ID
+    def __init__(self, user_id: str = None):
+        self.id = UUID(user_id or settings.MOCK_USER_ID)  # Convert string to UUID
         self.email = settings.MOCK_USER_EMAIL
         self.username = settings.MOCK_USER_NAME
         self.full_name = settings.MOCK_USER_NAME
@@ -118,8 +119,34 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_with_header(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """현재 인증된 사용자 조회 (헤더 기반 Mock 인증 지원)"""
+    
+    # Mock 인증 모드
+    if settings.MOCK_AUTH_ENABLED:
+        # 헤더에서 사용자 ID 추출
+        mock_user_id = request.headers.get("X-Mock-User-ID")
+        if mock_user_id:
+            try:
+                # UUID 형식 검증
+                UUID(mock_user_id)
+                return MockUser(mock_user_id)
+            except ValueError:
+                pass  # 잘못된 UUID 형식이면 기본 사용자 사용
+        
+        # 기본 Mock 사용자 반환
+        return MockUser()
+    
+    # 실제 인증 모드는 기존과 동일
+    return await get_current_user(credentials, db)
+
+
 async def get_current_active_user(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_with_header)
 ) -> User:
     """활성 사용자만 허용"""
     if not current_user.is_active:
@@ -131,7 +158,7 @@ async def get_current_active_user(
 
 
 async def get_current_superuser(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_with_header)
 ) -> User:
     """관리자만 허용"""
     if not current_user.is_superuser:

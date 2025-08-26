@@ -25,6 +25,7 @@ import type { SearchResult } from '../components/search/SearchResultsCard';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useImageSessionStore } from '../stores/imageSessionStore';
+import { ConversationCanvasManager } from '../services/conversationCanvasManager';
 
 
 export const ChatPage: React.FC = () => {
@@ -61,7 +62,7 @@ export const ChatPage: React.FC = () => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const queryClient = useQueryClient();
-  const { clearCanvas, autoActivateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, activateSessionCanvas, syncWithImageSession, loadCanvasForConversation, clearCanvasForNewConversation } = useCanvasStore();
+  const { clearCanvas, getOrCreateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, loadCanvasForConversation, clearCanvasForNewConversation } = useCanvasStore();
   
   // 진화형 이미지 세션 Store
   const {
@@ -72,6 +73,27 @@ export const ChatPage: React.FC = () => {
     extractTheme,
     evolvePrompt,
   } = useImageSessionStore();
+  
+  // 이미지 버전 삭제 이벤트 리스너 (실시간 상태 동기화)
+  useEffect(() => {
+    const handleImageVersionDeleted = (event: CustomEvent) => {
+      const { conversationId, deletedVersionId } = event.detail;
+      console.log('🔄 이미지 버전 삭제 이벤트 수신:', { conversationId, deletedVersionId });
+      
+      // 현재 대화의 이벤트인지 확인
+      if (conversationId === currentSessionId) {
+        // 메시지 배열을 강제 리렌더링하여 ChatMessage의 isInlineLinkDisabled가 업데이트되도록 함
+        setMessages(prevMessages => [...prevMessages]);
+        console.log('✅ 메시지 상태 강제 리렌더링 완료 - 인라인 링크 동기화');
+      }
+    };
+
+    window.addEventListener('imageVersionDeleted', handleImageVersionDeleted as EventListener);
+    
+    return () => {
+      window.removeEventListener('imageVersionDeleted', handleImageVersionDeleted as EventListener);
+    };
+  }, [currentSessionId]);
 
   // 대화 기록 로딩
   const { data: chatHistoryData, refetch: refetchHistory } = useQuery({
@@ -260,38 +282,72 @@ export const ChatPage: React.FC = () => {
         action: shouldActivateCanvas ? 'activate' : (hadActiveCanvas ? 'close' : 'keep_current')
       });
       
-      // 🎨 진화형 이미지 세션 시스템과 통합된 Canvas 관리
-      if (shouldActivateCanvas) {
-        // 1. Canvas 데이터가 있는 경우 - 진화형 세션 확인 및 활성화
-        const lastCanvasMessage = formattedMessages
-          .filter(msg => msg.canvasData)
-          .pop(); // 가장 마지막 Canvas 메시지
+      // 🎯 Canvas 및 ImageSession 복원 로직 (DB 우선, 메시지 보조)
+      try {
+        // 1. 먼저 DB에서 ImageSession 복원 시도
+        const imageSessionStore = useImageSessionStore.getState();
+        const dbSession = await imageSessionStore.loadSessionFromDB(conversationId);
+        
+        if (dbSession && dbSession.versions.length > 0) {
+          console.log('📥 DB에서 ImageSession 복원 성공:', { conversationId, versionsCount: dbSession.versions.length });
           
-        if (lastCanvasMessage?.canvasData) {
-          console.log('🎨 Canvas 자동 활성화 - 데이터:', lastCanvasMessage.canvasData);
-          
-          // 진화형 이미지 세션이 있는지 확인
-          if (hasImageSession(conversationId) && lastCanvasMessage.canvasData.type === 'image') {
-            console.log('🚀 진화형 이미지 세션 활성화:', conversationId);
+          // DB의 선택된 버전으로 Canvas 활성화
+          const selectedVersion = imageSessionStore.getSelectedVersion(conversationId);
+          if (selectedVersion) {
+            const canvasData = {
+              type: 'image',
+              image_data: {
+                prompt: selectedVersion.prompt,
+                negativePrompt: selectedVersion.negativePrompt,
+                style: selectedVersion.style,
+                size: selectedVersion.size,
+                images: [selectedVersion.imageUrl],
+                status: selectedVersion.status
+              }
+            };
             
-            // 세션 기반 Canvas 활성화
-            const itemId = activateSessionCanvas(conversationId);
-            if (itemId) {
-              console.log('✅ 진화형 Canvas 활성화 완료:', itemId);
-            } else {
-              // 세션이 있지만 활성화 실패 시 기본 방식 사용
-              console.warn('⚠️ 진화형 Canvas 활성화 실패, 기본 방식 사용');
-              autoActivateCanvas(lastCanvasMessage.canvasData, conversationId);
-            }
-          } else {
-            // 일반 Canvas 활성화 (conversationId 포함)
-            autoActivateCanvas(lastCanvasMessage.canvasData, conversationId);
+            const canvasId = getOrCreateCanvas(conversationId, 'image', canvasData);
+            console.log('✅ DB ImageSession으로 Canvas 활성화 완료:', canvasId);
+          }
+        } else if (shouldActivateCanvas) {
+          console.log('ℹ️ DB ImageSession 없음, 메시지 기반 Canvas 활성화 확인');
+          
+          // 2. DB에 세션이 없으면 메시지 기반 Canvas 활성화
+          const lastCanvasMessage = formattedMessages
+            .filter(msg => msg.canvasData)
+            .pop(); // 가장 마지막 Canvas 메시지
+            
+          if (lastCanvasMessage?.canvasData) {
+            console.log('🎨 메시지 기반 Canvas 활성화:', lastCanvasMessage.canvasData);
+            
+            // ConversationCanvasManager를 사용한 타입 추론
+            const inferredType = ConversationCanvasManager.inferCanvasType(lastCanvasMessage.canvasData);
+            console.log('🔍 Canvas 타입 추론 (loadConversation):', inferredType);
+            
+            // getOrCreateCanvas 사용 - 중복 생성 완전 방지
+            const canvasId = getOrCreateCanvas(conversationId, inferredType, lastCanvasMessage.canvasData);
+            console.log('✅ 메시지 기반 Canvas 활성화 완료:', canvasId);
+          }
+        } else if (hadActiveCanvas) {
+          // Canvas 데이터가 없고 이전에 활성화되어 있었으면 닫기
+          console.log('🎨 Canvas 자동 비활성화 - 데이터 없음');
+          closeCanvas();
+        }
+      } catch (error) {
+        console.error('❌ Canvas/ImageSession 복원 실패:', error);
+        
+        // 에러 발생 시 메시지 기반으로 폴백
+        if (shouldActivateCanvas) {
+          const lastCanvasMessage = formattedMessages
+            .filter(msg => msg.canvasData)
+            .pop();
+          
+          if (lastCanvasMessage?.canvasData) {
+            const inferredType = ConversationCanvasManager.inferCanvasType(lastCanvasMessage.canvasData);
+            const canvasId = getOrCreateCanvas(conversationId, inferredType, lastCanvasMessage.canvasData);
+            console.log('✅ 폴백: 메시지 기반 Canvas 활성화 완료:', canvasId);
           }
         }
-      } else if (hadActiveCanvas) {
-        // Canvas 데이터가 없고 이전에 활성화되어 있었으면 닫기
-        console.log('🎨 Canvas 자동 비활성화 - 데이터 없음');
-        closeCanvas();
       }
       // 둘 다 아니면 현재 상태 유지
       
@@ -408,87 +464,30 @@ export const ChatPage: React.FC = () => {
                                (response.canvas_data.image_data.images?.length > 0 || 
                                 response.canvas_data.image_data.image_urls?.length > 0);
         
-        // 🎨 진화형 이미지 세션 시스템과 통합된 Canvas 자동 활성화
+        // 🎨 ConversationCanvasManager를 사용한 통합 Canvas 활성화
         setTimeout(() => {
-          // 1. 진화형 이미지 세션 처리 (이미지 타입이고 currentSessionId가 있는 경우)
-          if (response.canvas_data.type === 'image' && sessionIdToUse) {
-            console.log('🚀 진화형 이미지 시스템 처리:', {
-              type: response.canvas_data.type,
-              sessionId: sessionIdToUse,
-              hasSession: hasImageSession(sessionIdToUse),
-              isImageComplete,
-            });
-            
+          console.log('🎨 Canvas 활성화 시작 (sendMessage):', {
+            type: response.canvas_data.type,
+            sessionId: sessionIdToUse,
+            isImageComplete
+          });
+          
+          // ConversationCanvasManager로 타입 추론
+          const inferredType = ConversationCanvasManager.inferCanvasType(response.canvas_data);
+          console.log('🔍 Canvas 타입 추론 (sendMessage):', inferredType);
+          
+          // getOrCreateCanvas로 통합 처리 - 중복 생성 완전 방지
+          const canvasId = getOrCreateCanvas(sessionIdToUse, inferredType, response.canvas_data);
+          console.log('✅ Canvas 활성화 완료 (중복 방지, sendMessage) - Canvas ID:', canvasId);
+          
+          // 진화형 이미지 세션 처리 (이미지 타입인 경우)
+          if (inferredType === 'image' && sessionIdToUse) {
             if (!hasImageSession(sessionIdToUse)) {
               // 새로운 이미지 생성 세션 생성
               const theme = extractTheme(response.canvas_data.title || '이미지');
               const initialPrompt = response.canvas_data.image_data?.prompt || response.canvas_data.title || '이미지 생성';
               const newSession = createImageSession(sessionIdToUse, theme, initialPrompt);
               console.log('🎨 새 이미지 세션 생성:', newSession);
-            }
-            
-            // 버전 추가는 ImageGenerator 컴포넌트에서 자동 처리됨 (중복 방지)
-            // if (isImageComplete) {
-            //   console.log('🎨 이미진 완성됨 - 세션에 버전 추가');
-            //   const imageData = response.canvas_data.image_data;
-            //   
-            //   // 이미지 URL 추출
-            //   let imageUrl = '';
-            //   if (imageData.image_urls && imageData.image_urls.length > 0) {
-            //     imageUrl = imageData.image_urls[0];
-            //   } else if (imageData.images && imageData.images.length > 0) {
-            //     const firstImage = imageData.images[0];
-            //     imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url || '';
-            //   }
-            //   
-            //   if (imageUrl) {
-            //     const versionId = addImageVersion(currentSessionId, {
-            //       prompt: imageData.prompt || response.canvas_data.title || '이미진 생성',
-            //       negativePrompt: imageData.negativePrompt || '',
-            //       style: imageData.style || 'default',
-            //       size: imageData.size || '1K_1:1',
-            //       imageUrl: imageUrl,
-            //       status: 'completed',
-            //       isSelected: false,
-            //     });
-            //     console.log('🎨 이미진 버전 추가 완료:', versionId);
-            //   }
-            // }
-            
-            // 세션 기반 Canvas 활성화 또는 업데이트
-            if (isImageComplete && isCanvasOpen && hasActiveContent()) {
-              // Canvas가 이미 열려있고 이미지가 완성된 경우 → 업데이트
-              console.log('🎨 Canvas 이미지 업데이트 모드 (진화형)');
-              const updatedItemId = updateCanvasWithCompletedImage(response.canvas_data);
-              console.log('🎨 Canvas 이미지 업데이트 완료, Item ID:', updatedItemId);
-              
-              // 세션과 Canvas 동기화
-              syncWithImageSession(sessionIdToUse);
-            } else {
-              // Canvas가 없거나 새로운 작업인 경우 → 세션 기반 활성화
-              console.log('🎨 Canvas 신규 활성화 모드 (진화형)');
-              const itemId = activateSessionCanvas(sessionIdToUse);
-              if (itemId) {
-                console.log('✅ 진화형 Canvas 활성화 완료, Item ID:', itemId);
-              } else {
-                // 세션 활성화 실패 시 기본 방식 사용
-                console.warn('⚠️ 진화형 Canvas 활성화 실패, 기본 방식 사용');
-                const artifactId = autoActivateCanvas(response.canvas_data, sessionIdToUse);
-                console.log('🎨 Canvas 자동 활성화 완료 (기본 방식), Artifact ID:', artifactId);
-              }
-            }
-          } else {
-            // 2. 기본 Canvas 활성화 (일반 Canvas 또는 텍스트/마인드맵)
-            if (isImageComplete && isCanvasOpen && hasActiveContent()) {
-              // Canvas가 이미 열려있고 이미지가 완성된 경우 → 업데이트
-              console.log('🎨 Canvas 이미지 업데이트 모드');
-              const updatedItemId = updateCanvasWithCompletedImage(response.canvas_data);
-              console.log('🎨 Canvas 이미지 업데이트 완료, Item ID:', updatedItemId);
-            } else {
-              // Canvas가 없거나 새로운 작업인 경우 → 새로 활성화
-              console.log('🎨 Canvas 신규 활성화 모드');
-              const artifactId = autoActivateCanvas(response.canvas_data, sessionIdToUse);
-              console.log('🎨 Canvas 자동 활성화 완료, Artifact ID:', artifactId);
             }
           }
         }, 500); // 0.5초 딜레이
@@ -772,87 +771,30 @@ export const ChatPage: React.FC = () => {
                                          (result.canvas_data.image_data.images?.length > 0 || 
                                           result.canvas_data.image_data.image_urls?.length > 0);
                   
-                  // 🎨 진화형 이미지 세션 시스템과 통합된 스트리밍 Canvas 활성화
+                  // 🎨 ConversationCanvasManager를 사용한 통합 스트리밍 Canvas 활성화
                   setTimeout(() => {
-                    // 1. 진화형 이미지 세션 처리 (이미지 타입이고 currentSessionId가 있는 경우)
-                    if (result.canvas_data.type === 'image' && sessionIdToUse) {
-                      console.log('🚀 진화형 이미지 시스템 처리 (스트리밍):', {
-                        type: result.canvas_data.type,
-                        sessionId: sessionIdToUse,
-                        hasSession: hasImageSession(sessionIdToUse),
-                        isImageComplete,
-                      });
-                      
+                    console.log('🎨 스트리밍 Canvas 활성화 시작:', {
+                      type: result.canvas_data.type,
+                      sessionId: sessionIdToUse,
+                      isImageComplete
+                    });
+                    
+                    // ConversationCanvasManager로 타입 추론
+                    const inferredType = ConversationCanvasManager.inferCanvasType(result.canvas_data);
+                    console.log('🔍 Canvas 타입 추론 (스트리밍):', inferredType);
+                    
+                    // getOrCreateCanvas로 통합 처리 - 중복 생성 완전 방지
+                    const canvasId = getOrCreateCanvas(sessionIdToUse, inferredType, result.canvas_data);
+                    console.log('✅ 스트리밍 Canvas 활성화 완료 (중복 방지) - Canvas ID:', canvasId);
+                    
+                    // 진화형 이미지 세션 처리 (이미지 타입인 경우)
+                    if (inferredType === 'image' && sessionIdToUse) {
                       if (!hasImageSession(sessionIdToUse)) {
                         // 새로운 이미지 생성 세션 생성
                         const theme = extractTheme(result.canvas_data.title || '이미지');
                         const initialPrompt = result.canvas_data.image_data?.prompt || result.canvas_data.title || '이미지 생성';
                         const newSession = createImageSession(sessionIdToUse, theme, initialPrompt);
                         console.log('🎨 새 이미지 세션 생성 (스트리밍):', newSession);
-                      }
-                      
-                      // 버전 추가는 ImageGenerator 컴포넌트에서 자동 처리됨 (스트리밍 중복 방지)
-                      // if (isImageComplete) {
-                      //   console.log('🎨 이미지 완성됨 - 세션에 버전 추가 (스트리밍)');
-                      //   const imageData = result.canvas_data.image_data;
-                      //   
-                      //   // 이미지 URL 추출
-                      //   let imageUrl = '';
-                      //   if (imageData.image_urls && imageData.image_urls.length > 0) {
-                      //     imageUrl = imageData.image_urls[0];
-                      //   } else if (imageData.images && imageData.images.length > 0) {
-                      //     const firstImage = imageData.images[0];
-                      //     imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url || '';
-                      //   }
-                      //   
-                      //   if (imageUrl) {
-                      //     const versionId = addImageVersion(currentSessionId, {
-                      //       prompt: imageData.prompt || result.canvas_data.title || '이미지 생성',
-                      //       negativePrompt: imageData.negativePrompt || '',
-                      //       style: imageData.style || 'default',
-                      //       size: imageData.size || '1K_1:1',
-                      //       imageUrl: imageUrl,
-                      //       status: 'completed',
-                      //       isSelected: false,
-                      //     });
-                      //     console.log('🎨 이미지 버전 추가 완료 (스트리밍):', versionId);
-                      //   }
-                      // }
-                      
-                      // 세션 기반 Canvas 활성화 또는 업데이트
-                      if (isImageComplete && isCanvasOpen && hasActiveContent()) {
-                        // Canvas가 이미 열려있고 이미지가 완성된 경우 → 업데이트
-                        console.log('🎨 스트리밍 Canvas 이미지 업데이트 모드 (진화형)');
-                        const updatedItemId = updateCanvasWithCompletedImage(result.canvas_data);
-                        console.log('🎨 스트리밍 Canvas 이미지 업데이트 완료, Item ID:', updatedItemId);
-                        
-                        // 세션과 Canvas 동기화
-                        syncWithImageSession(sessionIdToUse);
-                      } else {
-                        // Canvas가 없거나 새로운 작업인 경우 → 세션 기반 활성화
-                        console.log('🎨 스트리밍 Canvas 신규 활성화 모드 (진화형)');
-                        const itemId = activateSessionCanvas(sessionIdToUse);
-                        if (itemId) {
-                          console.log('✅ 진화형 Canvas 활성화 완료 (스트리밍), Item ID:', itemId);
-                        } else {
-                          // 세션 활성화 실패 시 기본 방식 사용
-                          console.warn('⚠️ 진화형 Canvas 활성화 실패 (스트리밍), 기본 방식 사용');
-                          const artifactId = autoActivateCanvas(result.canvas_data, sessionIdToUse);
-                          console.log('🎨 Canvas 자동 활성화 완료 (기본 방식, 스트리밍), Artifact ID:', artifactId);
-                        }
-                      }
-                    } else {
-                      // 2. 기본 Canvas 활성화 (일반 Canvas 또는 텍스트/마인드맵)
-                      if (isImageComplete && isCanvasOpen && hasActiveContent()) {
-                        // Canvas가 이미 열려있고 이미지가 완성된 경우 → 업데이트
-                        console.log('🎨 스트리밍 Canvas 이미지 업데이트 모드');
-                        const updatedItemId = updateCanvasWithCompletedImage(result.canvas_data);
-                        console.log('🎨 스트리밍 Canvas 이미지 업데이트 완료, Item ID:', updatedItemId);
-                      } else {
-                        // Canvas가 없거나 새로운 작업인 경우 → 새로 활성화
-                        console.log('🎨 스트리밍 Canvas 신규 활성화 모드');
-                        const artifactId = autoActivateCanvas(result.canvas_data, sessionIdToUse);
-                        console.log('🎨 스트리밍에서 Canvas 자동 활성화 완료, Artifact ID:', artifactId);
                       }
                     }
                   }, 800); // 0.8초 딜레이 (스트리밍이 완전히 끝난 후)
@@ -992,6 +934,33 @@ export const ChatPage: React.FC = () => {
           console.log('🔍 새로운 메시지 상태:', newMessages.length, '개');
           return newMessages;
         });
+        
+        // 🚀 스마트 Canvas-ImageSession 통합 동기화 (중복 방지)
+        if (response.canvas_data && sessionIdToUse) {
+          console.log('🔄 스마트 Canvas 동기화 시작:', response.canvas_data);
+          
+          try {
+            const canvasStore = useCanvasStore.getState();
+            
+            // 🎯 중복 감지 및 방지가 내장된 스마트 동기화
+            const syncResult = await canvasStore.syncImageToSessionStore(sessionIdToUse, response.canvas_data);
+            console.log('📋 동기화 결과:', syncResult);
+            
+            // 양방향 동기화 완성
+            canvasStore.syncCanvasWithImageSession(sessionIdToUse);
+            
+            // 상태 변화에 따른 UI 업데이트
+            if (syncResult.action === 'created_new') {
+              console.log('✅ 새 버전 생성 완료 - 히스토리 업데이트');
+            } else if (syncResult.action === 'selected_existing') {
+              console.log('✅ 기존 버전 선택 완료 - 중복 방지됨');
+            }
+            setMessages(prev => [...prev]);
+            
+          } catch (syncError) {
+            console.error('❌ 스마트 Canvas 동기화 실패:', syncError);
+          }
+        }
         
         // 최종 메시지 추가 후 스트리밍 상태 정리
         setIsStreamingResponse(false);
@@ -1201,6 +1170,28 @@ export const ChatPage: React.FC = () => {
                   if (lastCanvasMessage?.canvasData) {
                     console.log('🎨 Canvas 자동 활성화 (히스토리) - 데이터:', lastCanvasMessage.canvasData);
                     
+                    // 🚀 히스토리 로딩 시 스마트 동기화 (중복 방지)
+                    try {
+                      const canvasStore = useCanvasStore.getState();
+                      
+                      if (lastCanvasMessage.canvasData.type === 'image') {
+                        // 🎯 스마트 동기화: 기존 버전 선택 우선, 신규 생성은 필요시에만
+                        const syncResult = await canvasStore.syncImageToSessionStore(conversationId, lastCanvasMessage.canvasData);
+                        console.log('📋 히스토리 동기화 결과:', syncResult);
+                        
+                        // 양방향 동기화 완성
+                        canvasStore.syncCanvasWithImageSession(conversationId);
+                        
+                        if (syncResult.action === 'selected_existing') {
+                          console.log('✅ 히스토리 - 기존 버전 선택 완료 (중복 방지)');
+                        } else if (syncResult.action === 'created_new') {
+                          console.log('✅ 히스토리 - 새 버전 생성 완료');
+                        }
+                      }
+                    } catch (syncError) {
+                      console.error('❌ 히스토리 동기화 실패:', syncError);
+                    }
+                    
                     // 진화형 이미지 세션이 있는지 확인
                     if (hasImageSession(conversationId) && lastCanvasMessage.canvasData.type === 'image') {
                       console.log('🚀 진화형 이미지 세션 활성화 (히스토리):', conversationId);
@@ -1212,11 +1203,13 @@ export const ChatPage: React.FC = () => {
                       } else {
                         // 세션이 있지만 활성화 실패 시 기본 방식 사용
                         console.warn('⚠️ 진화형 Canvas 활성화 실패 (히스토리), 기본 방식 사용');
-                        autoActivateCanvas(lastCanvasMessage.canvasData, conversationId);
+                        const inferredType = ConversationCanvasManager.inferCanvasType(lastCanvasMessage.canvasData);
+                        getOrCreateCanvas(conversationId, inferredType, lastCanvasMessage.canvasData);
                       }
                     } else {
                       // 일반 Canvas 활성화 (conversationId 포함)
-                      autoActivateCanvas(lastCanvasMessage.canvasData, conversationId);
+                      const inferredType = ConversationCanvasManager.inferCanvasType(lastCanvasMessage.canvasData);
+                      getOrCreateCanvas(conversationId, inferredType, lastCanvasMessage.canvasData);
                     }
                   }
                 } else if (hadActiveCanvas) {

@@ -1,44 +1,132 @@
 /**
- * 이미지 버전 갤러리 컴포넌트
+ * 이미지 버전 갤러리 컴포넌트 (v2.0)
+ * Canvas-ImageSession 통합 시스템 지원
  * 썸네일 그리드로 버전 히스토리를 표시하고 선택/삭제 기능 제공
  */
 
 import React, { useState } from 'react';
-import type { ImageVersion } from '../../stores/imageSessionStore';
+import type { ImageVersion } from '../../types/imageSession';
+import { useCanvasStore } from '../../stores/canvasStore';
+import { useImageSessionStore } from '../../stores/imageSessionStore';
 
 interface ImageVersionGalleryProps {
   conversationId: string;
-  versions: ImageVersion[];
-  selectedVersionId: string;
-  onVersionSelect: (versionId: string) => void;
-  onVersionDelete: (versionId: string) => void;
-  onDeleteAll: () => void;
+  versions?: ImageVersion[]; // 옵션으로 변경 (Canvas 컨텐츠에서 추출 가능)
+  selectedVersionId?: string; // 옵션으로 변경
+  compact?: boolean; // 간단한 모드 (기본 false)
 }
 
 const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
   conversationId,
-  versions,
-  selectedVersionId,
-  onVersionSelect,
-  onVersionDelete,
-  onDeleteAll,
+  versions: propVersions,
+  selectedVersionId: propSelectedVersionId,
+  compact = false,
 }) => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  
+  // Store에서 데이터 가져오기 (props 우선)
+  const canvasStore = useCanvasStore();
+  const imageSessionStore = useImageSessionStore();
+  
+  // Canvas 또는 ImageSession에서 데이터 추출
+  const session = imageSessionStore.getSession(conversationId);
+  
+  // ImageSession이 없지만 Canvas에 이미지가 있는 경우 자동으로 세션 생성
+  React.useEffect(() => {
+    if (!session && conversationId) {
+      // Canvas Store에서 해당 대화의 이미지 Canvas 찾기
+      const canvasItems = canvasStore.items.filter(item => 
+        item.type === 'image' && 
+        (item.content as any)?.conversationId === conversationId
+      );
+      
+      if (canvasItems.length > 0) {
+        console.log('🔄 ImageVersionGallery - Canvas 데이터 기반 ImageSession 자동 생성:', conversationId);
+        
+        // Canvas에서 첫 번째 이미지의 정보로 세션 생성
+        const firstCanvas = canvasItems[0];
+        const imageContent = firstCanvas.content as any;
+        
+        const theme = imageContent.style || '이미지 생성';
+        const basePrompt = imageContent.prompt || '사용자 요청';
+        
+        // 임시 세션 생성 (비동기이므로 즉시 반영되지는 않음)
+        imageSessionStore.createSession(conversationId, theme, basePrompt);
+        
+        // Canvas의 각 이미지를 버전으로 추가
+        canvasItems.forEach((canvas, index) => {
+          const content = canvas.content as any;
+          imageSessionStore.addVersion(conversationId, {
+            prompt: content.prompt || '이미지 생성',
+            negativePrompt: content.negativePrompt || '',
+            style: content.style || 'realistic',
+            size: content.size || '1K_1:1',
+            imageUrl: content.imageUrl || '',
+            status: content.status === 'completed' ? 'completed' : 'generating',
+            isSelected: index === 0 // 첫 번째를 기본 선택
+          });
+        });
+      }
+    }
+  }, [conversationId, session, canvasStore.items, imageSessionStore]);
+  
+  const versions = propVersions || session?.versions || [];
+  const selectedVersionId = propSelectedVersionId || session?.selectedVersionId || '';
+  
+  // Canvas Store에서도 이미지 정보 확인 (실시간 반영용)
+  const canvasItems = canvasStore.items.filter(item => 
+    item.type === 'image' && 
+    (item.content as any)?.conversationId === conversationId
+  );
+  
+  console.log('🆼 ImageVersionGallery - 데이터 상태:', {
+    conversationId,
+    versionsCount: versions.length,
+    canvasItemsCount: canvasItems.length,
+    selectedVersionId,
+    hasSession: !!session,
+    canvasImages: canvasItems.map(item => ({
+      id: item.id,
+      hasImage: !!(item.content as any)?.imageUrl
+    }))
+  });
 
   // 버전 번호 순으로 정렬
   const sortedVersions = [...versions].sort((a, b) => a.versionNumber - b.versionNumber);
 
+  // 버전 선택 핸들러
+  const handleVersionSelect = (versionId: string) => {
+    console.log('🎯 ImageVersionGallery - 버전 선택:', { conversationId, versionId });
+    
+    // Canvas Store를 통해 선택 (자동으로 ImageSession도 동기화)
+    canvasStore.selectVersionInCanvas(conversationId, versionId);
+  };
+  
   const handleDeleteClick = (versionId: string, event: React.MouseEvent) => {
     event.stopPropagation(); // 버전 선택 방지
     setDeleteTargetId(versionId);
     setDeleteConfirmOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (deleteTargetId) {
-      onVersionDelete(deleteTargetId);
+  const handleDeleteConfirm = async () => {
+    if (!deleteTargetId) return;
+    
+    console.log('🗑️ ImageVersionGallery - 버전 삭제:', { conversationId, versionId: deleteTargetId });
+    
+    try {
+      // ImageSession Store의 하이브리드 메서드 사용 (DB + 메모리 동시 삭제)
+      await imageSessionStore.deleteVersionHybrid(conversationId, deleteTargetId);
+      
+      // Canvas 자동 동기화
+      canvasStore.syncCanvasWithImageSession(conversationId);
+      
+      console.log('✅ ImageVersionGallery - 버전 삭제 완료');
+    } catch (error) {
+      console.error('❌ ImageVersionGallery - 버전 삭제 실패:', error);
+      alert('이미지 삭제에 실패했습니다. 다시 시도해 주세요.');
     }
+    
     setDeleteConfirmOpen(false);
     setDeleteTargetId(null);
   };
@@ -48,11 +136,27 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
     setDeleteTargetId(null);
   };
 
-  const handleDeleteAllClick = () => {
+  const handleDeleteAllClick = async () => {
     if (versions.length === 0) return;
     
-    if (window.confirm(`모든 이미지를 삭제하시겠습니까? (총 ${versions.length}개 이미지)`)) {
-      onDeleteAll();
+    const confirmMessage = `모든 이미지를 삭제하시겠습니까? (총 ${versions.length}개 이미지)`;
+    if (!window.confirm(confirmMessage)) return;
+    
+    console.log('🗑️ ImageVersionGallery - 전체 버전 삭제:', conversationId);
+    
+    try {
+      // 모든 버전 순차 삭제
+      for (const version of versions) {
+        await imageSessionStore.deleteVersionHybrid(conversationId, version.id);
+      }
+      
+      // Canvas 자동 동기화
+      canvasStore.syncCanvasWithImageSession(conversationId);
+      
+      console.log('✅ ImageVersionGallery - 전체 버전 삭제 완료');
+    } catch (error) {
+      console.error('❌ ImageVersionGallery - 전체 버전 삭제 실패:', error);
+      alert('이미지 삭제에 실패했습니다. 다시 시도해 주세요.');
     }
   };
 
@@ -85,8 +189,12 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
         </button>
       </div>
 
-      {/* 썸네일 그리드 - 1/4 크기로 축소 */}
-      <div className="grid grid-cols-6 gap-2">
+      {/* 썸네일 그리드 - compact 모드 지원 */}
+      <div className={`grid gap-2 ${
+        compact 
+          ? 'grid-cols-4' // compact 모드: 4열
+          : 'grid-cols-6' // 기본 모드: 6열
+      }`}>
         {sortedVersions.map((version) => (
           <div
             key={version.id}
@@ -97,7 +205,7 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
                 : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
               }
             `}
-            onClick={() => onVersionSelect(version.id)}
+            onClick={() => handleVersionSelect(version.id)}
             title={`그림 ${version.versionNumber}: ${version.prompt}`}
           >
             {/* 썸네일 이미지 - 1/4 크기 */}

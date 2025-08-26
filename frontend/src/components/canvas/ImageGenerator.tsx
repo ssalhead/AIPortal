@@ -16,6 +16,7 @@ import type { CanvasItem } from '../../types/canvas';
 import { useImageGenerationStore } from '../../stores/imageGenerationStore';
 import { useImageSessionStore } from '../../stores/imageSessionStore';
 import { useCanvasStore } from '../../stores/canvasStore';
+import { ConversationCanvasManager } from '../../services/conversationCanvasManager';
 import ImageVersionGallery from './ImageVersionGallery';
 
 // 기존 Canvas 시스템용 인터페이스
@@ -87,6 +88,11 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
     getSelectedVersion,
     extractTheme,
     evolvePrompt,
+    // 하이브리드 메서드들 추가
+    createSessionHybrid,
+    addVersionHybrid,
+    deleteVersionHybrid,
+    selectVersionHybrid,
   } = useImageSessionStore();
   
   // 현재 세션 정보
@@ -171,8 +177,8 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
     throw new Error('이미지 생성 시간이 초과되었습니다.');
   };
   
-  // 이미지 생성 완료 처리 - 진화형 시스템 통합
-  const handleImageGenerated = (imageUrl: string) => {
+  // 이미지 생성 완료 처리 - 진화형 시스템 통합 (하이브리드)
+  const handleImageGenerated = async (imageUrl: string) => {
     console.log('🖼️ 이미지 생성 완료:', imageUrl);
     console.log('🎨 Canvas 모드:', isCanvas);
     console.log('🔄 세션 모드:', !!conversationId);
@@ -202,20 +208,27 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
       selectedVersionId: currentSession.selectedVersionId
     } : 'null');
     
-    // 🛡️ 이중 안전장치: 세션이 없으면 즉석에서 생성
+    // 🛡️ 이중 안전장치: 세션이 없으면 즉석에서 생성 (하이브리드)
     if (conversationId && !currentSession) {
-      console.log('🛡️ [SAFETY] 세션이 없어서 handleImageGenerated에서 즉석 생성');
+      console.log('🛡️ [SAFETY] 세션이 없어서 handleImageGenerated에서 즉석 생성 (하이브리드)');
       const theme = extractTheme(prompt);
-      const emergencySession = createSession(conversationId, theme, prompt);
-      console.log('🛡️ [SAFETY] 응급 세션 생성 완료:', {
-        conversationId,
-        theme,
-        newSessionId: emergencySession.conversationId
-      });
-      
-      // 즉시 재조회하여 세션 존재 확인
-      currentSession = getSession(conversationId);
-      console.log('🛡️ [SAFETY] 응급 세션 생성 후 재조회:', currentSession ? 'success' : 'failed');
+      try {
+        const emergencySession = await createSessionHybrid(conversationId, theme, prompt);
+        console.log('🛡️ [SAFETY] 응급 세션 생성 완료 (하이브리드):', {
+          conversationId,
+          theme,
+          newSessionId: emergencySession.conversationId
+        });
+        
+        // 즉시 재조회하여 세션 존재 확인
+        currentSession = getSession(conversationId);
+        console.log('🛡️ [SAFETY] 응급 세션 생성 후 재조회:', currentSession ? 'success' : 'failed');
+      } catch (error) {
+        console.error('❌ [SAFETY] 응급 세션 생성 실패:', error);
+        // 에러 시 기존 메서드로 폴백
+        const emergencySession = createSession(conversationId, theme, prompt);
+        currentSession = getSession(conversationId);
+      }
     }
     
     if (conversationId && currentSession) {
@@ -229,8 +242,8 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
         status: 'completed'
       });
       
-      // 새 버전 추가
-      const newVersionId = addVersion(conversationId, {
+      // 새 버전 추가 (하이브리드)
+      const newVersionId = await addVersionHybrid(conversationId, {
         prompt,
         negativePrompt,
         style: selectedStyle,
@@ -262,10 +275,19 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
       setTimeout(() => {
         console.log('⚡ [TIMING] Canvas 동기화 실행 (Zustand 업데이트 완료 후)');
         
-        // Canvas Store의 activateSessionCanvas를 다시 호출하여 새 버전 반영
-        const { activateSessionCanvas } = useCanvasStore.getState();
-        const updatedItemId = activateSessionCanvas(conversationId);
-        console.log('✅ Canvas Store 동기화 완료, 아이템 ID:', updatedItemId);
+        // ConversationCanvasManager를 사용한 통합 Canvas 업데이트
+        const { updateConversationCanvas } = useCanvasStore.getState();
+        const canvasData = {
+          prompt,
+          negativePrompt,
+          style: selectedStyle,
+          size: selectedSize,
+          imageUrl: imageUrl,
+          status: 'completed',
+          generation_result: { images: [imageUrl] }
+        };
+        const updatedCanvasId = updateConversationCanvas(conversationId, 'image', canvasData);
+        console.log('✅ Canvas Store 동기화 완료 (중복 방지), Canvas ID:', updatedCanvasId);
         
         // 동기화 완료 후 최종 상태 확인
         const finalSession = getSession(conversationId);
@@ -326,17 +348,23 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
     if (conversationId && !currentSessionForGenerate) {
       console.log('🔍 [DEBUG] 세션이 없어서 새로 생성합니다...');
       
-      // 새 세션 생성
+      // 새 세션 생성 (하이브리드)
       const theme = extractTheme(prompt);
       console.log('🔍 [DEBUG] 추출된 테마:', theme);
       
-      const newSession = createSession(conversationId, theme, prompt);
-      console.log('🎨 ImageGenerator - 새 이미지 세션 생성:', {
-        conversationId,
-        theme,
-        prompt,
-        새세션ID: newSession.conversationId
-      });
+      try {
+        const newSession = await createSessionHybrid(conversationId, theme, prompt);
+        console.log('🎨 ImageGenerator - 새 이미지 세션 생성 (하이브리드):', {
+          conversationId,
+          theme,
+          prompt,
+          새세션ID: newSession.conversationId
+        });
+      } catch (error) {
+        console.error('❌ 세션 생성 실패, 기존 방식으로 폴백:', error);
+        const newSession = createSession(conversationId, theme, prompt);
+        console.log('🔄 폴백: 기존 방식 세션 생성 완료:', newSession.conversationId);
+      }
       
       // 생성 후 즉시 확인
       const verifySession = getSession(conversationId);
@@ -415,7 +443,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
           completeGeneration(jobId, imageUrl);
         }
         
-        handleImageGenerated(imageUrl);
+        await handleImageGenerated(imageUrl);
       } else {
         throw new Error('이미지 생성에 실패했습니다.');
       }
@@ -592,12 +620,30 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
       </div>
       
       {/* 중간 버전 히스토리 영역 - 고정 높이 */}
-      {conversationId && session && session.versions.length > 0 && (
+      {(() => {
+        // Canvas Store에서 해당 대화의 이미지 Canvas 확인
+        const canvasItems = useCanvasStore.getState().items.filter(item => 
+          item.type === 'image' && 
+          (item.content as any)?.conversationId === conversationId
+        );
+        const hasCanvasImages = canvasItems.length > 0;
+        const hasSessionVersions = session && session.versions.length > 0;
+        
+        console.log('🎨 ImageGenerator - 히스토리 표시 조건 확인:', {
+          conversationId,
+          hasSessionVersions,
+          hasCanvasImages,
+          sessionVersionsCount: session?.versions.length || 0,
+          canvasImagesCount: canvasItems.length,
+          shouldShow: conversationId && (hasSessionVersions || hasCanvasImages)
+        });
+        
+        return conversationId && (hasSessionVersions || hasCanvasImages);
+      })() && (
         <div className="h-32 bg-white dark:bg-slate-800 rounded-xl shadow-lg p-3">
           <ImageVersionGallery
             conversationId={conversationId}
-            versions={session.versions}
-            selectedVersionId={session.selectedVersionId}
+            compact={true}
             onVersionSelect={(versionId) => {
               selectVersion(conversationId, versionId);
               const selectedVer = session.versions.find(v => v.id === versionId);
@@ -623,15 +669,31 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
                 }
               }
             }}
-            onVersionDelete={(versionId) => {
-              deleteVersion(conversationId, versionId);
-              // 삭제 후 선택된 버전이 변경되었으면 UI 업데이트
-              const newSelectedVersion = getSelectedVersion(conversationId);
-              if (newSelectedVersion) {
-                setPrompt(newSelectedVersion.prompt);
-                setNegativePrompt(newSelectedVersion.negativePrompt);
-                setSelectedStyle(newSelectedVersion.style);
-                setSelectedSize(newSelectedVersion.size);
+            onVersionDelete={async (versionId) => {
+              try {
+                // 하이브리드 삭제 (DB + 메모리)
+                await deleteVersionHybrid(conversationId, versionId);
+                
+                // 삭제 후 선택된 버전이 변경되었으면 UI 업데이트
+                const newSelectedVersion = getSelectedVersion(conversationId);
+                if (newSelectedVersion) {
+                  setPrompt(newSelectedVersion.prompt);
+                  setNegativePrompt(newSelectedVersion.negativePrompt);
+                  setSelectedStyle(newSelectedVersion.style);
+                  setSelectedSize(newSelectedVersion.size);
+                }
+                
+                console.log('✅ 이미지 버전 삭제 완료 (하이브리드):', versionId);
+                
+                // 🔄 전체 컴포넌트 리렌더링 트리거 (인라인 링크 상태 동기화)
+                // 이는 상위 컴포넌트에서 메시지 목록을 다시 렌더링하게 하여
+                // ChatMessage의 isInlineLinkDisabled가 새로운 삭제 상태를 반영하도록 합니다.
+                window.dispatchEvent(new CustomEvent('imageVersionDeleted', {
+                  detail: { conversationId, deletedVersionId: versionId }
+                }));
+                
+              } catch (error) {
+                console.error('❌ 이미지 버전 삭제 실패:', error);
               }
             }}
             onDeleteAll={() => {

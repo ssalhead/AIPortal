@@ -39,6 +39,7 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
     feedbacks = relationship("MessageFeedback", back_populates="conversation", cascade="all, delete-orphan")
     summaries = relationship("ConversationSummary", back_populates="conversation", cascade="all, delete-orphan")
+    # image_sessions = relationship("ImageGenerationSession", back_populates="conversation", cascade="all, delete-orphan")  # 임시 비활성화
 
 class Message(Base):
     __tablename__ = "messages"

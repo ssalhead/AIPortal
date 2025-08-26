@@ -17,6 +17,8 @@ import { useResponsive } from '../../hooks/useResponsive';
 import type { MessageFeedback } from '../../types/feedback';
 import { loggers } from '../../utils/logger';
 import { useCanvasStore } from '../../stores/canvasStore';
+import { useImageSessionStore } from '../../stores/imageSessionStore';
+import { ConversationCanvasManager } from '../../services/conversationCanvasManager';
 
 interface ChatMessageProps {
   message: string;
@@ -99,8 +101,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const [feedback, setFeedback] = useState<MessageFeedback | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   
-  // Canvas Store 함수들
-  const { autoActivateCanvas, openWithArtifact } = useCanvasStore();
+  // Canvas Store 함수들 (새로운 통합 시스템 사용)
+  const { getOrCreateCanvas, openWithArtifact } = useCanvasStore();
+  const { isImageDeleted } = useImageSessionStore();
   
   // ProgressiveMarkdown ref
   const progressiveMarkdownRef = useRef<ProgressiveMarkdownRef>(null);
@@ -120,27 +123,173 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
 
-  // Canvas Artifact 열기 핸들러
+  // Canvas Artifact 열기 핸들러 (새로운 통합 시스템 사용)
   const handleOpenCanvas = () => {
-    if (canvasData) {
-      console.log('🎨 Artifact 버튼 클릭 - Canvas 데이터:', canvasData);
-      console.log('🎨 Artifact 버튼 클릭 - conversationId:', conversationId);
-      const artifactId = autoActivateCanvas(canvasData, conversationId);
-      console.log('🎨 Canvas 활성화 완료 - Artifact ID:', artifactId);
+    // 비활성화된 인라인 링크는 클릭 방지
+    if (isInlineLinkDisabled) {
+      console.log('🗑️ 삭제된 이미지로 인한 인라인 링크 클릭 차단');
+      return;
+    }
+    
+    if (canvasData && conversationId) {
+      console.log('🎨 Artifact 버튼 클릭 (새 시스템) - Canvas 데이터:', canvasData);
+      console.log('🎨 Artifact 버튼 클릭 (새 시스템) - conversationId:', conversationId);
+      
+      // ConversationCanvasManager를 통한 타입 추론
+      const inferredType = ConversationCanvasManager.inferCanvasType(canvasData);
+      
+      console.log('🔍 Canvas 타입 추론:', inferredType);
+      
+      // getOrCreateCanvas 사용 - 중복 생성 완전 방지
+      const canvasId = getOrCreateCanvas(conversationId, inferredType, canvasData);
+      console.log('✅ Canvas 활성화 완료 (중복 방지) - Canvas ID:', canvasId);
+      
+      // 🎨 ImageSession 버전 선택 동기화 (이미지 타입인 경우)
+      if (inferredType === 'image' && canvasData.image_data) {
+        const imageSessionStore = useImageSessionStore.getState();
+        const session = imageSessionStore.getSession(conversationId);
+        
+        if (session) {
+          // 클릭한 메시지의 이미지 URL 추출
+          let targetImageUrl = null;
+          const { image_data } = canvasData;
+          
+          if (image_data.image_urls && image_data.image_urls.length > 0) {
+            targetImageUrl = image_data.image_urls[0];
+          } else if (image_data.images && image_data.images.length > 0) {
+            const firstImage = image_data.images[0];
+            targetImageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+          } else if (image_data.generation_result?.images?.[0]) {
+            const firstImage = image_data.generation_result.images[0];
+            targetImageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+          }
+          
+          if (targetImageUrl) {
+            // 해당 이미진 URL에 맞는 버전 찾기
+            const matchingVersion = session.versions.find(v => v.imageUrl === targetImageUrl);
+            
+            if (matchingVersion && matchingVersion.id !== session.selectedVersionId) {
+              console.log('🔄 ImageSession 버전 동기화:', {
+                from: session.selectedVersionId,
+                to: matchingVersion.id,
+                targetImageUrl: targetImageUrl.slice(0, 50) + '...'
+              });
+              
+              imageSessionStore.selectVersion(conversationId, matchingVersion.id);
+            } else {
+              console.log('🔍 대상 버전이 이미 선택되어 있거나 찾을 수 없음');
+            }
+          }
+        }
+      }
+    } else {
+      console.warn('⚠️ Canvas 데이터 또는 conversationId가 없음');
     }
   };
   
-  // Canvas 데이터 변경 감지 (디버깅용 - 강화)
+  // v4.0 스마트 인라인 링크 생명주기 관리
+  const inlineLinkStatus = React.useMemo(() => {
+    if (!canvasData || !conversationId) {
+      return { isDisabled: true, reason: 'no_canvas_data' };
+    }
+    
+    // 이미지 Canvas 특별 처리 (기존 로직 유지)
+    if (canvasData.type === 'image') {
+      let imageUrl = null;
+      const { image_data } = canvasData;
+      
+      if (image_data?.image_urls?.[0]) {
+        imageUrl = image_data.image_urls[0];
+      } else if (image_data?.images?.[0]) {
+        const firstImage = image_data.images[0];
+        imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+      } else if (image_data?.generation_result?.images?.[0]) {
+        const firstImage = image_data.generation_result.images[0];
+        imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+      }
+      
+      if (imageUrl) {
+        const deleted = isImageDeleted(conversationId, imageUrl);
+        if (deleted) {
+          console.log('🗑️ 삭제된 이미지로 인한 인라인 링크 비활성화:', imageUrl.slice(0, 50) + '...');
+          return { isDisabled: true, reason: 'image_deleted' };
+        }
+      }
+    }
+    
+    // v4.0 Canvas 지속성 체크
+    // TODO: Canvas Store와 연동하여 실제 Canvas 존재 여부 확인
+    // 현재는 canvasData 존재 여부로 판단
+    const hasValidCanvasData = canvasData && (
+      (canvasData.type === 'image' && canvasData.image_data) ||
+      (canvasData.type === 'text' && canvasData.text_data) ||
+      (canvasData.type === 'mindmap' && canvasData.mindmap_data) ||
+      (canvasData.type === 'code' && canvasData.code_data) ||
+      (canvasData.type === 'chart' && canvasData.chart_data)
+    );
+    
+    if (!hasValidCanvasData) {
+      return { isDisabled: true, reason: 'invalid_canvas_data' };
+    }
+    
+    // 활성 상태 - Canvas 데이터가 존재하고 유효함
+    return { isDisabled: false, reason: 'active' };
+  }, [canvasData, conversationId, isImageDeleted]);
+  
+  // 하위 호환성을 위한 기존 변수
+  const isInlineLinkDisabled = inlineLinkStatus.isDisabled;
+  
+  // v4.0 Canvas 타입별 레이블
+  const getCanvasTypeLabel = (type?: string): string => {
+    switch (type) {
+      case 'image': return '이미지 생성';
+      case 'text': return '텍스트 노트';
+      case 'mindmap': return '마인드맵';
+      case 'code': return '코드 편집';
+      case 'chart': return '차트 분석';
+      default: return '작업';
+    }
+  };
+  
+  // 비활성화 이유별 메시지
+  const getDisabledLinkMessage = (reason: string): string => {
+    switch (reason) {
+      case 'image_deleted': return '🗑️ 이미지가 삭제되어 사용할 수 없음';
+      case 'no_canvas_data': return '❌ Canvas 데이터 없음';
+      case 'invalid_canvas_data': return '⚠️ Canvas 데이터 손상됨';
+      case 'canvas_not_found': return '🔍 Canvas를 찾을 수 없음';
+      case 'session_expired': return '⏱️ 세션이 만료됨';
+      default: return '❓ 사용할 수 없음';
+    }
+  };
+  
+  // Canvas 데이터 변경 감지 (v4.0 강화 버전)
   useEffect(() => {
     if (!isUser) {
       if (canvasData) {
-        console.log(`🎨 ChatMessage Canvas 데이터 수신 - 메시지 ID: ${messageId}, 타입: ${canvasData.type}`, canvasData);
-        console.log(`✅ 인라인 링크 버튼이 표시됩니다.`);
+        console.log(`🎨 ChatMessage Canvas 데이터 수신 - 메시지 ID: ${messageId}`, {
+          type: canvasData.type,
+          status: inlineLinkStatus.reason,
+          isDisabled: inlineLinkStatus.isDisabled,
+          hasMetadata: !!canvasData.metadata,
+          hasContinuity: !!canvasData.metadata?.continuity
+        });
+        
+        // 연속성 정보 로깅
+        if (canvasData.metadata?.continuity) {
+          console.log(`🔗 Canvas 연속성 정보:`, {
+            baseCanvasId: canvasData.metadata.continuity.baseCanvasId,
+            relationshipType: canvasData.metadata.continuity.relationshipType,
+            referenceDescription: canvasData.metadata.continuity.referenceDescription
+          });
+        }
+        
+        console.log(`✅ 인라인 링크 버튼 상태: ${inlineLinkStatus.isDisabled ? '비활성' : '활성'}`);
       } else {
         console.log(`❌ ChatMessage Canvas 데이터 없음 - 메시지 ID: ${messageId}, 인라인 버튼이 표시되지 않습니다.`);
       }
     }
-  }, [canvasData, messageId, isUser]);
+  }, [canvasData, messageId, isUser, inlineLinkStatus]);
 
   // 기존 피드백 로드
   useEffect(() => {
@@ -548,10 +697,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           {/* Canvas Artifact 버튼 (AI 응답에 canvas_data가 있을 때) */}
           {!isUser && canvasData && (
             <div className="mt-3 ml-1">
-              <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/30 border border-purple-200 dark:border-purple-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer group/artifact" onClick={handleOpenCanvas}>
+              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl shadow-sm transition-all duration-200 group/artifact ${
+                isInlineLinkDisabled 
+                  ? 'bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 opacity-60 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/30 border border-purple-200 dark:border-purple-700 hover:shadow-md cursor-pointer'
+              }`} onClick={handleOpenCanvas}>
                 <div className="flex items-center gap-2">
                   {/* Canvas 타입별 아이콘 */}
-                  <div className="p-1.5 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
+                  <div className={`p-1.5 rounded-lg ${
+                    isInlineLinkDisabled 
+                      ? 'bg-gray-400 dark:bg-gray-600'
+                      : 'bg-gradient-to-br from-purple-500 to-pink-500'
+                  }`}>
                     {canvasData.type === 'image' ? (
                       <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -573,11 +730,34 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                   
                   {/* Canvas 정보 */}
                   <div className="flex flex-col">
-                    <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
-                      {canvasData.title || `Canvas ${canvasData.type === 'image' ? '이미지' : canvasData.type === 'mindmap' ? '마인드맵' : '작업'}`}
-                    </span>
-                    <span className="text-xs text-purple-600 dark:text-purple-400">
-                      클릭하여 Canvas에서 보기
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-medium ${
+                        isInlineLinkDisabled 
+                          ? 'text-gray-500 dark:text-gray-400'
+                          : 'text-purple-700 dark:text-purple-300'
+                      }`}>
+                        {canvasData.title || `Canvas ${canvasData.type === 'image' ? '이미지' : canvasData.type === 'mindmap' ? '마인드맵' : '작업'}`}
+                      </span>
+                      
+                      {/* v4.0 연속성 정보 배지 */}
+                      {!inlineLinkStatus.isDisabled && canvasData.metadata?.continuity?.baseCanvasId && (
+                        <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded text-xs font-medium"
+                             title={`이전 Canvas를 ${canvasData.metadata.continuity.relationshipType || '참조'}하여 생성됨`}>
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                          </svg>
+                          연속
+                        </div>
+                      )}
+                    </div>
+                    <span className={`text-xs ${
+                      inlineLinkStatus.isDisabled 
+                        ? 'text-gray-400 dark:text-gray-500'
+                        : 'text-purple-600 dark:text-purple-400'
+                    }`}>
+                      {inlineLinkStatus.isDisabled 
+                        ? getDisabledLinkMessage(inlineLinkStatus.reason)
+                        : `🎨 Canvas에서 보기 • ${getCanvasTypeLabel(canvasData?.type)}`}
                     </span>
                   </div>
                 </div>

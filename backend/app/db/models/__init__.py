@@ -5,6 +5,7 @@ from app.db.models.cache import CacheEntry
 from app.db.models.feedback import MessageFeedback, FeedbackAnalytics, UserFeedbackProfile
 from app.db.models.file import File, FileProcessingJob, FileShare, FileVersion
 from app.db.models.image_generation import GeneratedImage
+from app.db.models.image_session import ImageGenerationSession, ImageGenerationVersion
 
 __all__ = [
     "User",
@@ -21,5 +22,7 @@ __all__ = [
     "FileProcessingJob",
     "FileShare", 
     "FileVersion",
-    "GeneratedImage"
+    "GeneratedImage",
+    "ImageGenerationSession",
+    "ImageGenerationVersion"
 ]

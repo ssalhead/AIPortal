@@ -1,5 +1,6 @@
 /**
- * Canvas 워크스페이스 컴포넌트
+ * Canvas 워크스페이스 컴포넌트 v4.0
+ * 영구 보존, 자동 저장, 연속성 시스템 통합
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -18,13 +19,20 @@ import {
   Edit3,
   Palette,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Clock,
+  Link2,
+  Zap
 } from 'lucide-react';
 import { useCanvasStore } from '../../stores/canvasStore';
 import type { CanvasToolType } from '../../types/canvas';
 import { TextNoteEditor } from './TextNoteEditor';
 import { ImageGenerator } from './ImageGenerator';
 import { MindMapEditor } from './MindMapEditor';
+import CanvasHistoryPanel from './CanvasHistoryPanel';
+import CanvasReferenceIndicator from './CanvasReferenceIndicator';
+import { CanvasShareStrategy } from '../../services/CanvasShareStrategy';
+import { CanvasAutoSave } from '../../services/CanvasAutoSave';
 
 const TOOL_ICONS: Record<CanvasToolType, React.ReactNode> = {
   text: <FileText className="w-4 h-4" />,
@@ -47,6 +55,12 @@ interface CanvasWorkspaceProps {
 }
 
 export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId }) => {
+  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<{
+    isDirty: boolean;
+    lastSaveTime: number;
+  } | null>(null);
+  
   const {
     items,
     activeItemId,
@@ -57,13 +71,33 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
     exportCanvas,
     importCanvas,
     hasActiveContent,
-    closeCanvas
+    closeCanvas,
+    notifyCanvasChange,
+    getAutoSaveStatus
   } = useCanvasStore();
   
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const activeItem = items.find(item => item.id === activeItemId);
+  
+  // v4.0 자동 저장 상태 실시간 업데이트
+  useEffect(() => {
+    if (activeItem?.id) {
+      const status = getAutoSaveStatus(activeItem.id);
+      setAutoSaveStatus(status);
+      
+      // 주기적으로 자동 저장 상태 업데이트
+      const interval = setInterval(() => {
+        const currentStatus = getAutoSaveStatus(activeItem.id);
+        setAutoSaveStatus(currentStatus);
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    } else {
+      setAutoSaveStatus(null);
+    }
+  }, [activeItem?.id, getAutoSaveStatus]);
   
   // Canvas에 활성 콘텐츠가 없으면 렌더링하지 않음
   if (!hasActiveContent()) {
@@ -119,6 +153,37 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
         </div>
         
         <div className="flex items-center gap-2">
+          {/* v4.0 자동 저장 상태 표시 */}
+          {autoSaveStatus && (
+            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-md text-xs">
+              <Zap className="w-3 h-3" />
+              <span>
+                {autoSaveStatus.isDirty ? '저장 중...' : '저장됨'}
+              </span>
+            </div>
+          )}
+
+          {/* v4.0 Canvas 히스토리 버튼 */}
+          {conversationId && (
+            <button
+              onClick={() => setIsHistoryPanelOpen(true)}
+              className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              title="Canvas 히스토리"
+            >
+              <Clock className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* v4.0 연속성 작업 버튼 */}
+          {activeItem && CanvasShareStrategy.supportsContinuity(activeItem.type) && (
+            <button
+              className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              title="연속성 작업"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
             className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
@@ -139,26 +204,55 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
       {/* Canvas 콘텐츠 영역 - 전체 화면 활용 */}
       <div className="flex-1 p-6 overflow-y-auto bg-slate-50 dark:bg-slate-900">
         {activeItem ? (
-          <div className="max-w-6xl mx-auto">
-            {activeItem.type === 'text' && (
-              <TextNoteEditor
-                item={activeItem}
-                onUpdate={(updates) => updateItem(activeItem.id, updates)}
-              />
-            )}
-            {activeItem.type === 'image' && (
-              <ImageGenerator
-                item={activeItem}
-                onUpdate={(updates) => updateItem(activeItem.id, updates)}
+          <div className="max-w-6xl mx-auto space-y-6">
+            {/* v4.0 Canvas 참조 관계 표시 */}
+            {conversationId && (
+              <CanvasReferenceIndicator
+                currentCanvasId={activeItem.id}
                 conversationId={conversationId}
               />
             )}
-            {activeItem.type === 'mindmap' && (
-              <MindMapEditor
-                item={activeItem}
-                onUpdate={(updates) => updateItem(activeItem.id, updates)}
-              />
-            )}
+
+            {/* Canvas 에디터 영역 */}
+            <div>
+              {activeItem.type === 'text' && (
+                <TextNoteEditor
+                  item={activeItem}
+                  onUpdate={(updates) => {
+                    updateItem(activeItem.id, updates);
+                    // v4.0 자동 저장 알림
+                    if (conversationId) {
+                      notifyCanvasChange(activeItem.id, { ...activeItem.content, ...updates });
+                    }
+                  }}
+                />
+              )}
+              {activeItem.type === 'image' && (
+                <ImageGenerator
+                  item={activeItem}
+                  onUpdate={(updates) => {
+                    updateItem(activeItem.id, updates);
+                    // v4.0 자동 저장 알림
+                    if (conversationId) {
+                      notifyCanvasChange(activeItem.id, { ...activeItem.content, ...updates });
+                    }
+                  }}
+                  conversationId={conversationId}
+                />
+              )}
+              {activeItem.type === 'mindmap' && (
+                <MindMapEditor
+                  item={activeItem}
+                  onUpdate={(updates) => {
+                    updateItem(activeItem.id, updates);
+                    // v4.0 자동 저장 알림
+                    if (conversationId) {
+                      notifyCanvasChange(activeItem.id, { ...activeItem.content, ...updates });
+                    }
+                  }}
+                />
+              )}
+            </div>
           </div>
         ) : (
           <div className="h-full flex items-center justify-center">
@@ -176,6 +270,15 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
           </div>
         )}
       </div>
+
+      {/* v4.0 Canvas 히스토리 패널 */}
+      {conversationId && (
+        <CanvasHistoryPanel
+          conversationId={conversationId}
+          isOpen={isHistoryPanelOpen}
+          onClose={() => setIsHistoryPanelOpen(false)}
+        />
+      )}
     </div>
   );
 };
