@@ -124,7 +124,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   };
 
   // Canvas Artifact 열기 핸들러 (새로운 통합 시스템 사용)
-  const handleOpenCanvas = () => {
+  const handleOpenCanvas = async () => {
     // 비활성화된 인라인 링크는 클릭 방지
     if (isInlineLinkDisabled) {
       console.log('🗑️ 삭제된 이미지로 인한 인라인 링크 클릭 차단');
@@ -165,17 +165,21 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           }
           
           if (targetImageUrl) {
-            // 해당 이미진 URL에 맞는 버전 찾기
+            // 해당 이미지 URL에 맞는 버전 찾기
             const matchingVersion = session.versions.find(v => v.imageUrl === targetImageUrl);
             
             if (matchingVersion && matchingVersion.id !== session.selectedVersionId) {
-              console.log('🔄 ImageSession 버전 동기화:', {
+              console.log('🔄 ImageSession 버전 동기화 (인라인 링크 클릭):', {
                 from: session.selectedVersionId,
                 to: matchingVersion.id,
                 targetImageUrl: targetImageUrl.slice(0, 50) + '...'
               });
               
-              imageSessionStore.selectVersion(conversationId, matchingVersion.id);
+              // 🚀 Canvas Store의 selectVersionInCanvas 직접 호출로 실시간 이미지 업데이트
+              const canvasStore = useCanvasStore.getState();
+              await canvasStore.selectVersionInCanvas(conversationId, matchingVersion.id);
+              
+              console.log('✅ 인라인 링크 클릭: Canvas 이미지 실시간 업데이트 완료');
             } else {
               console.log('🔍 대상 버전이 이미 선택되어 있거나 찾을 수 없음');
             }

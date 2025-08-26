@@ -20,6 +20,9 @@ interface ImageSessionState {
   isLoading: Map<string, boolean>;
   loadError: string | null;
   
+  // 동기화 완료 플래그 (conversationId -> 완료 시간)
+  syncCompletedFlags: Map<string, number>;
+  
   // 현재 사용자 ID (임시로 하드코딩, 추후 인증 시스템과 연동)
   currentUserId: string;
   
@@ -62,7 +65,7 @@ interface ImageSessionState {
   clearDeletedImages: (conversationId: string) => void;
   
   // DB 동기화 메서드
-  loadSessionFromDB: (conversationId: string) => Promise<ImageGenerationSession | null>;
+  loadSessionFromDB: (conversationId: string, forceReload?: boolean) => Promise<ImageGenerationSession | null>;
   syncSessionToDB: (conversationId: string) => Promise<void>;
   syncVersionToDB: (conversationId: string, versionId: string) => Promise<void>;
   syncDeletedImageUrls: (conversationId: string) => Promise<void>;
@@ -70,6 +73,12 @@ interface ImageSessionState {
   // 상태 관리
   setLoading: (conversationId: string, loading: boolean) => void;
   setError: (error: string | null) => void;
+  isLoadingSession: (conversationId: string) => boolean;
+  
+  // 동기화 완료 플래그 관리
+  markSyncCompleted: (conversationId: string) => void;
+  isSyncCompleted: (conversationId: string, maxAgeMs?: number) => boolean;
+  clearSyncFlag: (conversationId: string) => void;
   
   // 하이브리드 메서드 (메모리 + DB 동기화)
   createSessionHybrid: (conversationId: string, theme: string, initialPrompt: string) => Promise<ImageGenerationSession>;
@@ -83,6 +92,7 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
   deletedImageUrls: new Map(),
   isLoading: new Map(),
   loadError: null,
+  syncCompletedFlags: new Map(),
   currentUserId: 'ff8e410a-53a4-4541-a7d4-ce265678d66a', // Mock 사용자 ID (실제 UUID 형식)
   
   // === 세션 관리 ===
@@ -149,6 +159,31 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
       currentVersions: get().getSession(conversationId)?.versions?.length || 0,
       versions: get().getSession(conversationId)?.versions?.map(v => ({ id: v.id, prompt: v.prompt.substring(0, 30) }))
     });
+    
+    // 🚫 버전 중복 생성 방지: 동일한 이미지URL + 프롬프트 조합 검증
+    const session = get().getSession(conversationId);
+    if (session && versionData.imageUrl) {
+      const existingVersion = session.versions.find(v => 
+        v.imageUrl === versionData.imageUrl && 
+        v.prompt.trim() === (versionData.prompt || '').trim()
+      );
+      
+      if (existingVersion) {
+        console.log('🚫 ImageSession Store - 동일한 버전 이미 존재, 새 생성 스킵:', {
+          existingVersionId: existingVersion.id,
+          versionNumber: existingVersion.versionNumber,
+          imageUrl: versionData.imageUrl.substring(0, 50) + '...',
+          prompt: versionData.prompt?.substring(0, 30) + '...'
+        });
+        
+        // 기존 버전 선택하고 ID 반환
+        get().selectVersion(conversationId, existingVersion.id);
+        return existingVersion.id;
+      }
+    }
+    
+    // 새 버전 추가 시 동기화 플래그 초기화 (새로운 동기화가 필요할 수 있음)
+    get().clearSyncFlag(conversationId);
     
     const versionId = uuidv4();
     const nextVersionNumber = get().getNextVersionNumber(conversationId);
@@ -457,9 +492,27 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
   
   // === DB 동기화 메서드 ===
   
-  loadSessionFromDB: async (conversationId) => {
-    console.log('📥 DB에서 세션 로드 시작:', conversationId);
+  loadSessionFromDB: async (conversationId, forceReload = false) => {
+    console.log('📥 DB에서 세션 로드 시작:', { conversationId, forceReload });
     const state = get();
+    
+    // 🚨 RACE CONDITION 방지 + 강제 로드 지원
+    const existingSession = state.getSession(conversationId);
+    if (!forceReload && existingSession && existingSession.versions.length > 0) {
+      console.log('⏸️ 이미 메모리에 세션 존재 (버전 있음), DB 로드 생략:', {
+        conversationId,
+        versionsCount: existingSession.versions.length,
+        forceReload
+      });
+      return existingSession;
+    }
+    
+    if (forceReload && existingSession) {
+      console.log('🔄 강제 재로드 모드 - 기존 메모리 세션 무시:', {
+        conversationId,
+        existingVersions: existingSession.versions.length
+      });
+    }
     
     try {
       state.setLoading(conversationId, true);
@@ -470,7 +523,18 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
       if (apiSession) {
         const storeSession = ApiResponseConverter.toStoreSession(apiSession);
         
-        // 메모리에 세션 저장
+        // 🛡️ 로드 직전에 다시 한번 체크 - 다른 컴포넌트가 먼저 생성했을 수 있음
+        const currentSession = state.getSession(conversationId);
+        if (currentSession && currentSession.versions.length > 0) {
+          console.log('⚠️ 로드 중에 다른 컴포넌트가 세션 생성함, DB 로드 취소:', {
+            conversationId,
+            currentVersionsCount: currentSession.versions.length,
+            dbVersionsCount: storeSession.versions.length
+          });
+          return currentSession; // 기존 메모리 세션 유지
+        }
+        
+        // 메모리에 세션 저장 (DB 데이터가 우선)
         set((state) => {
           const newSessions = new Map(state.sessions);
           newSessions.set(conversationId, storeSession);
@@ -609,6 +673,48 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
     set({ loadError: error });
   },
   
+  isLoadingSession: (conversationId) => {
+    return get().isLoading.get(conversationId) || false;
+  },
+  
+  // === 동기화 완료 플래그 관리 ===
+  
+  markSyncCompleted: (conversationId) => {
+    console.log('🏁 동기화 완료 플래그 설정:', conversationId);
+    set((state) => {
+      const newFlags = new Map(state.syncCompletedFlags);
+      newFlags.set(conversationId, Date.now());
+      return { syncCompletedFlags: newFlags };
+    });
+  },
+  
+  isSyncCompleted: (conversationId, maxAgeMs = 30000) => {
+    const completedTime = get().syncCompletedFlags.get(conversationId);
+    if (!completedTime) return false;
+    
+    const age = Date.now() - completedTime;
+    const isValid = age <= maxAgeMs;
+    
+    console.log('🔍 동기화 완료 플래그 확인:', {
+      conversationId,
+      completedTime,
+      age,
+      maxAgeMs,
+      isValid
+    });
+    
+    return isValid;
+  },
+  
+  clearSyncFlag: (conversationId) => {
+    console.log('🗑️ 동기화 완료 플래그 삭제:', conversationId);
+    set((state) => {
+      const newFlags = new Map(state.syncCompletedFlags);
+      newFlags.delete(conversationId);
+      return { syncCompletedFlags: newFlags };
+    });
+  },
+  
   // === 하이브리드 메서드 (메모리 + DB 동기화) ===
   
   createSessionHybrid: async (conversationId, theme, initialPrompt) => {
@@ -699,29 +805,105 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
     // 1. 메모리에서 선택
     state.selectVersion(conversationId, versionId);
     
-    // 2. DB에 비동기 동기화
+    // 2. DB에 비동기 동기화 (개선된 404 오류 방지)
     try {
       const apiSession = await ImageSessionApiClient.getSessionByConversation(conversationId, state.currentUserId);
       if (apiSession) {
-        await ImageSessionApiClient.selectVersion({
-          user_id: state.currentUserId,
-          session_id: apiSession.id,
-          version_id: versionId,
-        });
-        console.log('✅ DB 버전 선택 동기화 완료:', versionId);
+        // DB 세션의 versions 배열에서 해당 버전 존재 여부 확인
+        const versionExists = apiSession.versions.some((v: any) => v.id === versionId);
+        
+        if (versionExists) {
+          // 🛡️ 버전 존재 확인됨 - 안전하게 선택 API 호출
+          try {
+            await ImageSessionApiClient.selectVersion({
+              user_id: state.currentUserId,
+              session_id: apiSession.id,
+              version_id: versionId,
+            });
+            console.log('✅ DB 버전 선택 동기화 완료:', versionId);
+          } catch (selectError) {
+            console.warn('⚠️ 버전 선택 API 실패 (존재하는 버전인데도), 메모리에서만 처리:', selectError);
+          }
+        } else {
+          console.warn('⚠️ DB에 해당 버전이 존재하지 않음, DB 동기화 후 재시도:', {
+            conversationId,
+            versionId,
+            availableVersions: apiSession.versions.map((v: any) => ({ id: v.id, version_number: v.version_number }))
+          });
+          
+          // DB에 없는 경우 메모리 버전을 DB에 동기화 시도
+          const memorySession = state.getSession(conversationId);
+          const memoryVersion = memorySession?.versions.find(v => v.id === versionId);
+          
+          if (memoryVersion) {
+            console.log('🔄 메모리 버전을 DB에 동기화 시도:', versionId);
+            try {
+              await state.syncVersionToDB(conversationId, versionId);
+              
+              // 🔍 동기화 후 DB 세션 재조회로 버전 존재 재확인
+              const refreshedSession = await ImageSessionApiClient.getSessionByConversation(conversationId, state.currentUserId);
+              if (refreshedSession) {
+                const versionExistsAfterSync = refreshedSession.versions.some((v: any) => v.id === versionId);
+                
+                if (versionExistsAfterSync) {
+                  // 🎯 동기화 성공 - 이제 안전하게 선택 API 호출
+                  try {
+                    await ImageSessionApiClient.selectVersion({
+                      user_id: state.currentUserId,
+                      session_id: refreshedSession.id,
+                      version_id: versionId,
+                    });
+                    console.log('✅ DB 동기화 후 버전 선택 완료:', versionId);
+                  } catch (finalSelectError) {
+                    console.warn('⚠️ 동기화 후에도 버전 선택 실패, 메모리에서만 처리:', finalSelectError);
+                  }
+                } else {
+                  console.warn('⚠️ DB 동기화했지만 여전히 버전이 없음, 메모리에서만 처리');
+                }
+              }
+            } catch (syncError) {
+              console.warn('⚠️ DB 동기화 실패, 메모리에서만 처리:', syncError);
+            }
+          } else {
+            console.warn('⚠️ 메모리에도 해당 버전이 없음, 동기화 불가');
+          }
+        }
       } else {
         console.log('ℹ️ DB에 세션이 없어서 버전 선택 동기화 스킵:', conversationId);
         
-        // 세션이 없으면 메모리 세션을 DB에 저장 (세션 생성)
+        // 세션이 없으면 메모리 세션을 DB에 저장 시도
         const session = state.getSession(conversationId);
         if (session) {
-          console.log('🔄 메모리 세션을 DB에 동기화:', conversationId);
-          await state.syncSessionToDB(conversationId);
+          console.log('🔄 메모리 세션을 DB에 동기화 (버전 포함):', conversationId);
+          try {
+            await state.syncSessionToDB(conversationId);
+            
+            // 🔄 세션과 모든 버전을 동기화
+            for (const version of session.versions) {
+              try {
+                await state.syncVersionToDB(conversationId, version.id);
+              } catch (versionSyncError) {
+                console.warn(`⚠️ 버전 ${version.id} DB 동기화 실패:`, versionSyncError);
+              }
+            }
+          } catch (sessionSyncError) {
+            console.warn('⚠️ 세션 DB 동기화 실패:', sessionSyncError);
+          }
         }
       }
     } catch (error) {
       console.error('❌ DB 버전 선택 동기화 실패:', error);
-      // 메모리 상태는 유지 (사용자 경험 우선)
+      
+      // 🛡️ 404 및 기타 오류 처리 - 메모리 상태는 유지 (사용자 경험 우선)
+      if (error instanceof Error) {
+        if (error.message.includes('Not Found') || error.message.includes('404')) {
+          console.log('🔄 404 오류: DB에서 리소스를 찾을 수 없음, 메모리에서만 처리');
+        } else if (error.message.includes('Network') || error.message.includes('fetch')) {
+          console.log('🔄 네트워크 오류: 연결 문제, 메모리에서만 처리');
+        } else {
+          console.log('🔄 기타 오류:', error.message, '메모리에서만 처리');
+        }
+      }
     }
   },
 }));

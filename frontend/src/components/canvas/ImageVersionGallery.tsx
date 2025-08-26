@@ -32,44 +32,142 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
   // Canvas 또는 ImageSession에서 데이터 추출
   const session = imageSessionStore.getSession(conversationId);
   
-  // ImageSession이 없지만 Canvas에 이미지가 있는 경우 자동으로 세션 생성
+  // 🔄 ImageSession과 Canvas 데이터 일관성 확인 및 보정
   React.useEffect(() => {
-    if (!session && conversationId) {
-      // Canvas Store에서 해당 대화의 이미지 Canvas 찾기
-      const canvasItems = canvasStore.items.filter(item => 
-        item.type === 'image' && 
-        (item.content as any)?.conversationId === conversationId
-      );
+    if (!conversationId) return;
+    
+    // 🚫 최우선 플래그 확인 - 다른 모든 로직보다 먼저 실행하여 완전히 차단
+    if (imageSessionStore.isSyncCompleted(conversationId)) {
+      console.log('🚫 ImageVersionGallery - ChatPage 동기화 완료됨, 전체 동기화 로직 완전 스킵:', conversationId);
+      return; // 완전히 차단
+    }
+    
+    // 🚨 RACE CONDITION 방지: DB 로딩 중이면 대기
+    if (imageSessionStore.isLoadingSession(conversationId)) {
+      console.log('⏸️ ImageVersionGallery - DB 로딩 중이므로 대기:', conversationId);
+      return;
+    }
+    
+    // Canvas Store에서 해당 대화의 모든 이미지 Canvas 찾기
+    const canvasItems = canvasStore.items.filter(item => 
+      item.type === 'image' && 
+      (item.content as any)?.conversationId === conversationId
+    );
+    
+    const currentVersionsCount = session?.versions?.length || 0;
+    
+    console.log('🔍 ImageVersionGallery - 데이터 일관성 확인:', {
+      conversationId,
+      hasSession: !!session,
+      sessionVersionsCount: currentVersionsCount,
+      canvasItemsCount: canvasItems.length,
+      isLoadingSession: imageSessionStore.isLoadingSession(conversationId),
+      isSyncCompleted: imageSessionStore.isSyncCompleted(conversationId),
+      action: canvasItems.length > currentVersionsCount ? 'sync_needed' : 'sync_not_needed'
+    });
+    
+    // 🚨 데이터 불일치 감지: Canvas 아이템 > ImageSession 버전
+    if (canvasItems.length > currentVersionsCount) {
+      console.log('🔄 ImageVersionGallery - 데이터 불일치 감지, 동기화 필요:', {
+        canvasItems: canvasItems.length,
+        sessionVersions: currentVersionsCount,
+        deficit: canvasItems.length - currentVersionsCount
+      });
       
-      if (canvasItems.length > 0) {
-        console.log('🔄 ImageVersionGallery - Canvas 데이터 기반 ImageSession 자동 생성:', conversationId);
+      // 🔄 Canvas → ImageSession 역방향 동기화 실행 (비동기)
+      canvasStore.syncCanvasToImageSession(conversationId, canvasItems)
+        .then((syncResult) => {
+          console.log('✅ ImageVersionGallery - Canvas → ImageSession 동기화 완료:', syncResult);
+          
+          if (syncResult.versionsAdded > 0) {
+            // 동기화 후 ImageSession → Canvas 정방향 동기화도 실행
+            canvasStore.syncCanvasWithImageSession(conversationId);
+            console.log('🔄 ImageVersionGallery - 양방향 동기화 완료');
+            
+            // 🏁 ImageVersionGallery에서도 동기화 완료 플래그 설정
+            imageSessionStore.markSyncCompleted(conversationId);
+          }
+        })
+        .catch((syncError) => {
+          console.error('❌ ImageVersionGallery - 동기화 실패:', syncError);
+        });
+      
+    } else if (!session && canvasItems.length > 0) {
+      // 🆕 세션이 없고 Canvas 아이템만 있는 경우 - 전통적 방식으로 세션 생성
+      console.log('🆕 ImageVersionGallery - 세션 없음, 새 세션 생성 필요:', conversationId);
+      
+      // Canvas 아이템들을 versionNumber 순으로 정렬
+      const sortedCanvasItems = canvasItems.sort((a, b) => {
+        const aVersionNumber = (a.content as any)?.versionNumber || 1;
+        const bVersionNumber = (b.content as any)?.versionNumber || 1;
+        return aVersionNumber - bVersionNumber;
+      });
+      
+      // 첫 번째 Canvas에서 세션 정보 추출
+      const firstCanvas = sortedCanvasItems[0];
+      const imageContent = firstCanvas.content as any;
+      
+      const theme = imageContent.style || '이미지 생성';
+      const basePrompt = imageContent.prompt || '사용자 요청';
+      
+      // 🎨 새 세션 생성
+      console.log('🎨 ImageVersionGallery - 새 이미지 세션 생성 (다중 버전):', {
+        conversationId, 
+        theme, 
+        canvasItemsCount: sortedCanvasItems.length
+      });
+      
+      const newSession = imageSessionStore.createSession(conversationId, theme, basePrompt);
+      
+      // 🔄 모든 Canvas 아이템을 버전으로 변환
+      sortedCanvasItems.forEach((canvas, index) => {
+        const content = canvas.content as any;
         
-        // Canvas에서 첫 번째 이미지의 정보로 세션 생성
-        const firstCanvas = canvasItems[0];
-        const imageContent = firstCanvas.content as any;
-        
-        const theme = imageContent.style || '이미지 생성';
-        const basePrompt = imageContent.prompt || '사용자 요청';
-        
-        // 임시 세션 생성 (비동기이므로 즉시 반영되지는 않음)
-        imageSessionStore.createSession(conversationId, theme, basePrompt);
-        
-        // Canvas의 각 이미지를 버전으로 추가
-        canvasItems.forEach((canvas, index) => {
-          const content = canvas.content as any;
-          imageSessionStore.addVersion(conversationId, {
+        try {
+          const versionId = imageSessionStore.addVersion(conversationId, {
             prompt: content.prompt || '이미지 생성',
             negativePrompt: content.negativePrompt || '',
             style: content.style || 'realistic',
             size: content.size || '1K_1:1',
             imageUrl: content.imageUrl || '',
             status: content.status === 'completed' ? 'completed' : 'generating',
-            isSelected: index === 0 // 첫 번째를 기본 선택
+            isSelected: false
           });
-        });
+          
+          console.log(`✅ Canvas → ImageSession 버전 추가: ${index + 1}/${sortedCanvasItems.length}`, {
+            canvasId: canvas.id.substring(0, 20),
+            versionId: versionId.substring(0, 8),
+            versionNumber: (content.versionNumber || index + 1),
+            hasImageUrl: !!content.imageUrl
+          });
+        } catch (addError) {
+          console.error(`❌ Canvas 아이템 ${index + 1} 변환 실패:`, addError);
+        }
+      });
+      
+      // 🎯 가장 최신 버전 선택
+      if (sortedCanvasItems.length > 0) {
+        const latestVersion = imageSessionStore.getLatestVersion(conversationId);
+        if (latestVersion) {
+          imageSessionStore.selectVersion(conversationId, latestVersion.id);
+          console.log('🎯 ImageVersionGallery - 최신 버전 자동 선택:', latestVersion.versionNumber);
+        }
       }
+      
+      console.log('✅ ImageVersionGallery - Canvas 기반 다중 버전 ImageSession 생성 완료');
+      
+      // 🏁 새 세션 생성 완료 후 동기화 완료 플래그 설정
+      imageSessionStore.markSyncCompleted(conversationId);
+    } else {
+      console.log('✅ ImageVersionGallery - 데이터 일관성 확인됨, 추가 작업 불필요');
     }
-  }, [conversationId, session, canvasStore.items, imageSessionStore]);
+  }, [
+    conversationId, 
+    session, 
+    canvasStore.items, 
+    imageSessionStore,
+    imageSessionStore.isSyncCompleted(conversationId) // 플래그 상태 변경 시 즉시 반응
+  ]);
   
   const versions = propVersions || session?.versions || [];
   const selectedVersionId = propSelectedVersionId || session?.selectedVersionId || '';

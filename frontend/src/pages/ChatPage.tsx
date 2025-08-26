@@ -62,7 +62,7 @@ export const ChatPage: React.FC = () => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const queryClient = useQueryClient();
-  const { clearCanvas, getOrCreateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, loadCanvasForConversation, clearCanvasForNewConversation } = useCanvasStore();
+  const { clearCanvas, getOrCreateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, loadCanvasForConversation, clearCanvasForNewConversation, activateSessionCanvas } = useCanvasStore();
   
   // 진화형 이미지 세션 Store
   const {
@@ -289,26 +289,28 @@ export const ChatPage: React.FC = () => {
         const dbSession = await imageSessionStore.loadSessionFromDB(conversationId);
         
         if (dbSession && dbSession.versions.length > 0) {
-          console.log('📥 DB에서 ImageSession 복원 성공:', { conversationId, versionsCount: dbSession.versions.length });
+          console.log('📥 DB에서 ImageSession 복원 성공:', { 
+            conversationId, 
+            versionsCount: dbSession.versions.length,
+            selectedVersionId: dbSession.selectedVersionId,
+            allVersions: dbSession.versions.map(v => ({
+              id: v.id,
+              versionNumber: v.versionNumber,
+              hasImageUrl: !!v.imageUrl
+            }))
+          });
           
-          // DB의 선택된 버전으로 Canvas 활성화
-          const selectedVersion = imageSessionStore.getSelectedVersion(conversationId);
-          if (selectedVersion) {
-            const canvasData = {
-              type: 'image',
-              image_data: {
-                prompt: selectedVersion.prompt,
-                negativePrompt: selectedVersion.negativePrompt,
-                style: selectedVersion.style,
-                size: selectedVersion.size,
-                images: [selectedVersion.imageUrl],
-                status: selectedVersion.status
-              }
-            };
-            
-            const canvasId = getOrCreateCanvas(conversationId, 'image', canvasData);
-            console.log('✅ DB ImageSession으로 Canvas 활성화 완료:', canvasId);
-          }
+          // 🚀 activateSessionCanvas 사용으로 모든 버전 복원
+          console.log('🔄 loadConversation - activateSessionCanvas로 모든 이미지 버전 복원');
+          const canvasId = activateSessionCanvas(conversationId);
+          console.log('✅ DB ImageSession으로 모든 Canvas 버전 활성화 완료:', canvasId);
+          
+          // ImageVersionGallery에서 모든 버전을 표시할 수 있도록 세션 확인
+          const updatedSession = imageSessionStore.getSession(conversationId);
+          console.log('🔍 복원 후 ImageSession 상태 확인:', {
+            hasSession: !!updatedSession,
+            versionsCount: updatedSession?.versions?.length || 0
+          });
         } else if (shouldActivateCanvas) {
           console.log('ℹ️ DB ImageSession 없음, 메시지 기반 Canvas 활성화 확인');
           
@@ -1170,26 +1172,88 @@ export const ChatPage: React.FC = () => {
                   if (lastCanvasMessage?.canvasData) {
                     console.log('🎨 Canvas 자동 활성화 (히스토리) - 데이터:', lastCanvasMessage.canvasData);
                     
-                    // 🚀 히스토리 로딩 시 스마트 동기화 (중복 방지)
+                    // 🚀 히스토리 로딩 시 DB 우선 전략으로 스마트 동기화
                     try {
                       const canvasStore = useCanvasStore.getState();
                       
                       if (lastCanvasMessage.canvasData.type === 'image') {
-                        // 🎯 스마트 동기화: 기존 버전 선택 우선, 신규 생성은 필요시에만
-                        const syncResult = await canvasStore.syncImageToSessionStore(conversationId, lastCanvasMessage.canvasData);
-                        console.log('📋 히스토리 동기화 결과:', syncResult);
+                        // 🎯 1단계: Canvas 아이템 수와 메모리 세션 비교 (하이브리드 전략)
+                        console.log('🔍 히스토리 로딩 - 하이브리드 동기화 전략 시작:', conversationId);
+                        const imageSessionStore = useImageSessionStore.getState();
                         
-                        // 양방향 동기화 완성
+                        // Canvas 아이템 수 확인
+                        const canvasItems = canvasStore.items.filter(item => 
+                          item.type === 'image' && 
+                          (item.content as any)?.conversationId === conversationId
+                        );
+                        
+                        console.log('📊 히스토리 로딩 - 데이터 현황 분석:', {
+                          conversationId,
+                          canvasItemsCount: canvasItems.length,
+                          memorySessionVersions: imageSessionStore.getSession(conversationId)?.versions.length || 0,
+                          messagesWithCanvas: formattedMessages.filter(msg => msg.canvasData).length
+                        });
+                        
+                        // 🚨 데이터 불일치 감지 시 하이브리드 동기화 실행
+                        const memorySession = imageSessionStore.getSession(conversationId);
+                        const memoryVersionsCount = memorySession?.versions.length || 0;
+                        
+                        if (canvasItems.length > memoryVersionsCount) {
+                          console.log('🔄 데이터 불일치 감지 - Canvas → ImageSession 역방향 동기화 실행:', {
+                            canvasItems: canvasItems.length,
+                            memoryVersions: memoryVersionsCount,
+                            deficit: canvasItems.length - memoryVersionsCount
+                          });
+                          
+                          // Canvas → ImageSession 역방향 동기화 실행
+                          const reverseSync = await canvasStore.syncCanvasToImageSession(conversationId, canvasItems);
+                          console.log('📋 히스토리 - Canvas → ImageSession 역방향 동기화 결과:', reverseSync);
+                          
+                          if (reverseSync.versionsAdded > 0) {
+                            console.log('✅ 히스토리 - Canvas 기반 버전 복원 완료:', {
+                              versionsAdded: reverseSync.versionsAdded,
+                              finalVersionCount: imageSessionStore.getSession(conversationId)?.versions.length || 0
+                            });
+                          }
+                        } else if (memoryVersionsCount === 0) {
+                          // 🔍 메모리에 버전이 없으면 DB에서 강제 로드 시도
+                          console.log('🔄 메모리 세션 비어있음 - DB 강제 로드 시도:', conversationId);
+                          
+                          const dbSession = await imageSessionStore.loadSessionFromDB(conversationId, true); // forceReload = true
+                          
+                          if (dbSession && dbSession.versions.length > 0) {
+                            console.log('✅ DB 강제 로드 성공:', {
+                              conversationId,
+                              dbVersions: dbSession.versions.length,
+                              selectedVersionId: dbSession.selectedVersionId
+                            });
+                          } else if (canvasItems.length > 0) {
+                            // DB에도 없고 Canvas 아이템은 있으면 Canvas → Session 동기화
+                            console.log('🔄 DB에도 없음 - Canvas 데이터로 세션 생성:', conversationId);
+                            
+                            const syncResult = await canvasStore.syncImageToSessionStore(conversationId, lastCanvasMessage.canvasData);
+                            console.log('📋 히스토리 Canvas → Session 동기화 결과:', syncResult);
+                          }
+                        } else {
+                          console.log('✅ 데이터 일관성 확인됨 - 추가 동기화 불필요:', {
+                            canvasItems: canvasItems.length,
+                            memoryVersions: memoryVersionsCount
+                          });
+                        }
+                        
+                        // 🔄 최종 양방향 동기화 (ImageSession → Canvas)
+                        console.log('🔄 최종 ImageSession → Canvas 동기화 실행');
                         canvasStore.syncCanvasWithImageSession(conversationId);
                         
-                        if (syncResult.action === 'selected_existing') {
-                          console.log('✅ 히스토리 - 기존 버전 선택 완료 (중복 방지)');
-                        } else if (syncResult.action === 'created_new') {
-                          console.log('✅ 히스토리 - 새 버전 생성 완료');
-                        }
+                        // 🏁 동기화 완료 플래그 설정 (ImageVersionGallery에서 중복 동기화 방지)
+                        imageSessionStore.markSyncCompleted(conversationId);
+                        
+                        console.log('✅ 히스토리 - 하이브리드 동기화 전략 완료 + 플래그 설정');
                       }
                     } catch (syncError) {
                       console.error('❌ 히스토리 동기화 실패:', syncError);
+                      // 동기화 실패해도 Canvas는 표시되도록 fallback
+                      console.log('🔄 동기화 실패 - fallback으로 Canvas만 표시');
                     }
                     
                     // 진화형 이미지 세션이 있는지 확인

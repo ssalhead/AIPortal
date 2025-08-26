@@ -111,6 +111,9 @@ interface CanvasState {
   // ImageSession 연동 보장 - v3.0 완전 통합
   ensureImageSession: (conversationId: string, canvasData: any) => Promise<void>;
   
+  // Canvas → ImageSession 역방향 동기화 (v4.1 새 기능)
+  syncCanvasToImageSession: (conversationId: string, canvasItems?: CanvasItem[]) => Promise<{ action: string; versionsAdded: number; }>;
+  
   exportCanvas: () => string;
   importCanvas: (data: string) => void;
 }
@@ -162,8 +165,29 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
       
       console.log('📋 Canvas ID 생성:', { canvasId, shareConfig });
 
-      // 2. 기존 Canvas 검색
-      const existingCanvas = get().items.find(item => item.id === canvasId);
+      // 2. 기존 Canvas 검색 (ID 기반 + 이미지 중복 방지)
+      let existingCanvas = get().items.find(item => item.id === canvasId);
+      
+      // 🚫 이미지 Canvas 중복 생성 방지: 동일한 이미지URL 검증
+      if (!existingCanvas && type === 'image' && canvasData?.imageUrl) {
+        const duplicateImageCanvas = get().items.find(item => 
+          item.type === 'image' && 
+          (item.content as any)?.conversationId === conversationId &&
+          (item.content as any)?.imageUrl === canvasData.imageUrl
+        );
+        
+        if (duplicateImageCanvas) {
+          console.log('🚫 Canvas Store - 동일한 이미지 URL의 Canvas 이미 존재, 중복 생성 방지:', {
+            existingCanvasId: duplicateImageCanvas.id,
+            imageUrl: canvasData.imageUrl.substring(0, 50) + '...',
+            conversationId
+          });
+          
+          // 기존 Canvas 활성화하고 ID 반환
+          get().setActiveCanvas(duplicateImageCanvas.id);
+          return duplicateImageCanvas.id;
+        }
+      }
       
       if (existingCanvas) {
         console.log('✅ 기존 Canvas 발견, 업데이트:', canvasId);
@@ -740,22 +764,152 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     console.log('🔄 Canvas Store - Canvas ↔ ImageSession 동기화:', conversationId);
     
     const currentItems = get().items;
-    const existingCanvas = ConversationCanvasManager.findCanvas(currentItems, conversationId, 'image');
-    
-    if (!existingCanvas) return;
-    
     const imageSessionStore = useImageSessionStore.getState();
     const session = imageSessionStore.getSession(conversationId);
     
-    if (!session) return;
-    
-    const { content: integratedContent } = ConversationCanvasManager.integrateImageSession(
+    console.log('🔍 syncCanvasWithImageSession 상태 확인:', {
       conversationId,
-      session,
-      session.selectedVersionId
+      hasSession: !!session,
+      sessionVersions: session?.versions?.length || 0,
+      allCanvasItems: currentItems.length,
+      imageCanvasItems: currentItems.filter(item => 
+        item.type === 'image' && (item.content as any)?.conversationId === conversationId
+      ).length
+    });
+    
+    if (!session || !session.versions.length) {
+      console.log('❌ ImageSession이 없거나 버전이 없음');
+      return;
+    }
+    
+    // 모든 이미지 Canvas 아이템들을 ImageSession과 동기화
+    const imageCanvasItems = currentItems.filter(item => 
+      item.type === 'image' && (item.content as any)?.conversationId === conversationId
     );
     
-    get().updateItem(existingCanvas.id, { content: integratedContent });
+    console.log('🔍 발견된 이미지 Canvas 아이템들:', imageCanvasItems.map(item => ({
+      id: item.id,
+      conversationId: (item.content as any)?.conversationId,
+      hasImageUrl: !!(item.content as any)?.imageUrl
+    })));
+    
+    // ImageSession의 모든 버전을 Canvas로 변환
+    session.versions.forEach((version, index) => {
+      console.log(`🔍 버전 ${index + 1} 처리:`, {
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        hasImageUrl: !!version.imageUrl,
+        isSelected: version.isSelected
+      });
+      
+      // 해당 버전에 대응하는 Canvas 아이템 찾기
+      let existingCanvas = imageCanvasItems.find(canvas => {
+        const content = canvas.content as any;
+        return content?.selectedVersionId === version.id ||
+               content?.versionId === version.id ||
+               content?.imageUrl === version.imageUrl;
+      });
+      
+      if (!existingCanvas && version.imageUrl) {
+        // 대응하는 Canvas가 없으면 새로 생성
+        console.log(`🆕 버전 ${version.versionNumber}에 대한 Canvas 생성`);
+        
+        const newCanvasContent = {
+          conversationId,
+          imageUrl: version.imageUrl,
+          prompt: version.prompt,
+          negativePrompt: version.negativePrompt,
+          style: version.style,
+          size: version.size,
+          status: version.status,
+          selectedVersionId: version.id,
+          versionId: version.id,
+          versionNumber: version.versionNumber
+        };
+        
+        const newCanvas: CanvasItem = {
+          id: `canvas_${conversationId}_${version.id}`,
+          type: 'image',
+          content: newCanvasContent,
+          position: { x: 50 + (index * 20), y: 50 + (index * 20) },
+          size: { width: 400, height: 300 },
+          createdAt: version.createdAt,
+          updatedAt: new Date().toISOString(),
+          metadata: { fromImageSession: true }
+        };
+        
+        set(state => ({
+          items: [...state.items, newCanvas]
+        }));
+        
+        console.log(`✅ 새 Canvas 생성 완료:`, newCanvas.id);
+      } else if (existingCanvas) {
+        // 기존 Canvas 업데이트
+        console.log(`🔄 기존 Canvas 업데이트: ${existingCanvas.id}`);
+        
+        const updatedContent = {
+          ...existingCanvas.content,
+          conversationId,
+          imageUrl: version.imageUrl,
+          prompt: version.prompt,
+          negativePrompt: version.negativePrompt,
+          style: version.style,
+          size: version.size,
+          status: version.status,
+          selectedVersionId: version.id,
+          versionId: version.id,
+          versionNumber: version.versionNumber
+        };
+        
+        get().updateItem(existingCanvas.id, { content: updatedContent });
+        console.log(`✅ Canvas 업데이트 완료: ${existingCanvas.id}`);
+      }
+    });
+    
+    // 선택된 버전이 있으면 해당 Canvas를 활성화하고 메인 이미지로 설정
+    if (session.selectedVersionId) {
+      const selectedVersion = session.versions.find(v => v.id === session.selectedVersionId);
+      const selectedCanvas = get().items.find(item => 
+        item.type === 'image' && 
+        (item.content as any)?.conversationId === conversationId &&
+        ((item.content as any)?.selectedVersionId === session.selectedVersionId ||
+         (item.content as any)?.versionId === session.selectedVersionId)
+      );
+      
+      if (selectedCanvas && selectedVersion) {
+        console.log('🎯 선택된 버전의 Canvas 활성화 및 메인 이미지 업데이트:', {
+          canvasId: selectedCanvas.id,
+          versionId: selectedVersion.id,
+          versionNumber: selectedVersion.versionNumber,
+          imageUrl: selectedVersion.imageUrl
+        });
+        
+        // Canvas의 메인 컨텐츠를 선택된 버전으로 업데이트
+        get().updateItem(selectedCanvas.id, {
+          content: {
+            ...selectedCanvas.content,
+            conversationId,
+            imageUrl: selectedVersion.imageUrl,
+            prompt: selectedVersion.prompt,
+            negativePrompt: selectedVersion.negativePrompt,
+            style: selectedVersion.style,
+            size: selectedVersion.size,
+            status: selectedVersion.status,
+            selectedVersionId: selectedVersion.id,
+            versionId: selectedVersion.id,
+            versionNumber: selectedVersion.versionNumber
+          }
+        });
+        
+        // Canvas 활성화
+        set({
+          activeItemId: selectedCanvas.id,
+          isCanvasOpen: true
+        });
+      }
+    }
+    
+    console.log('✅ Canvas ↔ ImageSession 동기화 완료');
   },
 
   // ImageSession Store 변경 감지 시 Canvas 자동 업데이트
@@ -824,29 +978,56 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
           versionsCount: updatedSession.versions.length
         });
         
-        // 선택된 버전으로 Canvas 메인 컨텐츠 즉시 업데이트
-        const { content: integratedContent } = ConversationCanvasManager.integrateImageSession(
-          conversationId,
-          updatedSession,
-          updatedSession.selectedVersionId
-        );
+        // 선택된 버전 정보 직접 가져오기
+        const selectedVersion = updatedSession.versions.find(v => v.id === versionId);
         
-        // Canvas Store의 기존 아이템 즉시 업데이트
-        get().updateItem(existingCanvas.id, {
-          content: {
+        if (selectedVersion) {
+          console.log('🔍 Canvas Store - 선택된 버전 정보:', {
+            versionId: selectedVersion.id,
+            versionNumber: selectedVersion.versionNumber,
+            imageUrl: selectedVersion.imageUrl,
+            prompt: selectedVersion.prompt.substring(0, 50) + '...'
+          });
+          
+          // Canvas Store의 기존 아이템을 선택된 버전으로 직접 업데이트
+          const updatedContent = {
             ...existingCanvas.content,
-            ...integratedContent,
-            conversationId
-          }
-        });
+            conversationId,
+            imageUrl: selectedVersion.imageUrl,
+            prompt: selectedVersion.prompt,
+            negativePrompt: selectedVersion.negativePrompt,
+            style: selectedVersion.style,
+            size: selectedVersion.size,
+            status: selectedVersion.status,
+            selectedVersionId: selectedVersion.id,
+            versionId: selectedVersion.id,
+            versionNumber: selectedVersion.versionNumber,
+            // 강제 리렌더링을 위한 타임스탬프 추가
+            lastUpdated: new Date().toISOString()
+          };
+          
+          get().updateItem(existingCanvas.id, {
+            content: updatedContent,
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          console.warn('⚠️ Canvas Store - 선택된 버전을 찾을 수 없음:', versionId);
+        }
         
         console.log('✅ Canvas Store - Canvas 메인 이미지 즉시 전환 완료:', {
-          newImageUrl: integratedContent.imageUrl,
-          newSelectedVersionId: integratedContent.selectedVersionId
+          newImageUrl: selectedVersion?.imageUrl,
+          newSelectedVersionId: selectedVersion?.id
         });
         
-        // Canvas가 활성화되어 있지 않으면 활성화
-        if (!get().isCanvasOpen) {
+        // Canvas가 활성화되어 있지 않거나 다른 Canvas가 활성화되어 있으면 활성화
+        const currentState = get();
+        if (!currentState.isCanvasOpen || currentState.activeItemId !== existingCanvas.id) {
+          console.log('🎯 Canvas 활성화 (버전 선택과 함께):', {
+            wasOpen: currentState.isCanvasOpen,
+            previousActive: currentState.activeItemId,
+            newActive: existingCanvas.id
+          });
+          
           set({
             activeItemId: existingCanvas.id,
             isCanvasOpen: true,
@@ -875,34 +1056,83 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
   
   // === 진화형 이미지 시스템 통합 (레거시 - 호환성 유지) ===
   activateSessionCanvas: (conversationId) => {
-    console.log('🎨 Canvas Store - activateSessionCanvas:', conversationId);
+    console.log('🎨 Canvas Store - activateSessionCanvas (개선된 다중 버전 지원):', conversationId);
     
-    // 🎯 Step 1: 먼저 기존 Canvas 아이템 확인 (autoActivateCanvas와 동일한 로직)
-    const currentItems = get().items;
-    const existingConversationItem = currentItems.find(item => 
-      (item.content as any).conversationId === conversationId
-    );
-    
-    console.log('🔍 Canvas Store - activateSessionCanvas 기존 아이템 검색:', {
-      conversationId,
-      foundExisting: !!existingConversationItem,
-      existingItemId: existingConversationItem?.id,
-      totalItems: currentItems.length
-    });
-    
-    // ImageSession Store 접근
+    // 🚨 RACE CONDITION 방지: DB 로딩 중이면 기다리거나 기존 Canvas 반환
     const imageSessionStore = useImageSessionStore.getState();
     
-    // 세션이 이미 존재하는지 확인
+    // DB 로딩 중인지 확인
+    if (imageSessionStore.isLoadingSession(conversationId)) {
+      console.log('⏸️ DB 로딩 중이므로 activateSessionCanvas 지연');
+      
+      // 기존 Canvas가 있으면 반환, 없으면 빈 ID
+      const existingCanvas = get().items.find(item => 
+        item.type === 'image' && 
+        (item.content as any)?.conversationId === conversationId
+      );
+      
+      if (existingCanvas) {
+        console.log('✅ 기존 Canvas 반환 (DB 로딩 중):', existingCanvas.id);
+        return existingCanvas.id;
+      } else {
+        console.log('⚠️ DB 로딩 중이고 기존 Canvas 없음, 빈 ID 반환');
+        return '';
+      }
+    }
+    
+    // 🛡️ DB 로딩이 끝났지만 세션이 없는 경우 처리
     if (!imageSessionStore.hasSession(conversationId)) {
-      console.warn('⚠️ Canvas Store - 이미지 세션이 존재하지 않음:', conversationId);
-      return '';
+      console.log('⚠️ Canvas Store - DB 로딩 완료했지만 이미지 세션이 존재하지 않음:', conversationId);
+      
+      // 기존 Canvas 찾아서 반환 (Canvas Store 우선)
+      const existingCanvas = get().items.find(item => 
+        item.type === 'image' && 
+        (item.content as any)?.conversationId === conversationId
+      );
+      
+      if (existingCanvas) {
+        console.log('✅ 기존 Canvas 반환 (세션 없음):', existingCanvas.id);
+        return existingCanvas.id;
+      } else {
+        return '';
+      }
     }
     
     const session = imageSessionStore.getSession(conversationId);
-    if (!session) return '';
+    if (!session || !session.versions.length) {
+      console.warn('⚠️ Canvas Store - 세션이 없거나 버전이 없음');
+      
+      // 기존 Canvas 찾아서 반환 (Canvas Store 우선)
+      const existingCanvas = get().items.find(item => 
+        item.type === 'image' && 
+        (item.content as any)?.conversationId === conversationId
+      );
+      
+      if (existingCanvas) {
+        console.log('✅ 기존 Canvas 반환 (버전 없음):', existingCanvas.id);
+        return existingCanvas.id;
+      } else {
+        return '';
+      }
+    }
     
-    // 선택된 버전 또는 최신 버전 가져오기
+    console.log('🔍 Canvas Store - ImageSession 상태:', {
+      conversationId,
+      versionsCount: session.versions.length,
+      selectedVersionId: session.selectedVersionId,
+      versions: session.versions.map(v => ({
+        id: v.id,
+        versionNumber: v.versionNumber,
+        hasImageUrl: !!v.imageUrl,
+        isSelected: v.isSelected
+      }))
+    });
+    
+    // 🚀 Step 1: 모든 버전을 Canvas로 동기화 (이미 구현된 syncCanvasWithImageSession 사용)
+    console.log('🔄 Canvas Store - 모든 이미지 버전을 Canvas로 동기화 시작');
+    get().syncCanvasWithImageSession(conversationId);
+    
+    // 🚀 Step 2: 선택된 버전 또는 최신 버전으로 Canvas 활성화
     const selectedVersion = imageSessionStore.getSelectedVersion(conversationId) 
                           || imageSessionStore.getLatestVersion(conversationId);
     
@@ -911,74 +1141,68 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
       return '';
     }
     
-    console.log('🔍 Canvas Store - 사용할 버전:', {
+    console.log('🎯 Canvas Store - 활성화할 버전:', {
       id: selectedVersion.id,
       versionNumber: selectedVersion.versionNumber,
       prompt: selectedVersion.prompt.substring(0, 50) + '...',
       imageUrl: selectedVersion.imageUrl
     });
     
-    if (existingConversationItem) {
-      console.log('🔄 Canvas Store - 기존 이미지 Canvas 아이템 업데이트 및 활성화:', existingConversationItem.id);
-      
-      // 기존 Canvas 아이템을 최신 버전으로 업데이트
-      get().updateItem(existingConversationItem.id, {
-        content: {
-          ...existingConversationItem.content,
-          imageUrl: selectedVersion.imageUrl,
-          status: selectedVersion.status,
-          prompt: selectedVersion.prompt,
-          negativePrompt: selectedVersion.negativePrompt,
-          style: selectedVersion.style,
-          size: selectedVersion.size,
-          conversationId: conversationId, // 대화 ID 유지
-        }
-      });
-      
+    // 🚀 Step 3: 해당 버전에 대응하는 Canvas 찾기 및 활성화
+    const currentItems = get().items;
+    const targetCanvas = currentItems.find(item => 
+      item.type === 'image' && 
+      (item.content as any)?.conversationId === conversationId &&
+      ((item.content as any)?.selectedVersionId === selectedVersion.id ||
+       (item.content as any)?.versionId === selectedVersion.id ||
+       (item.content as any)?.imageUrl === selectedVersion.imageUrl)
+    );
+    
+    if (targetCanvas) {
+      console.log('🎯 Canvas Store - 대상 Canvas 활성화:', targetCanvas.id);
       set({
+        activeItemId: targetCanvas.id,
         isCanvasOpen: true,
-        activeItemId: existingConversationItem.id,
+        lastConversationId: conversationId
       });
-      
-      return existingConversationItem.id;
+      return targetCanvas.id;
     }
     
-    // 새로운 Canvas 아이템 생성
-    const content = {
+    // 🚀 Step 4: Canvas가 없으면 새로 생성 (폴백)
+    console.log('🆕 Canvas Store - 새 Canvas 생성 (폴백)');
+    const newCanvasContent = {
+      conversationId,
+      imageUrl: selectedVersion.imageUrl,
       prompt: selectedVersion.prompt,
       negativePrompt: selectedVersion.negativePrompt,
       style: selectedVersion.style,
       size: selectedVersion.size,
       status: selectedVersion.status,
-      imageUrl: selectedVersion.imageUrl,
-      conversationId: conversationId, // 대화 ID 저장
+      selectedVersionId: selectedVersion.id,
+      versionId: selectedVersion.id,
+      versionNumber: selectedVersion.versionNumber
     };
     
-    const newItem: CanvasItem = {
-      id: uuidv4(),
+    const newCanvas: CanvasItem = {
+      id: `canvas_${conversationId}_${selectedVersion.id}`,
       type: 'image',
-      content,
+      content: newCanvasContent,
       position: { x: 50, y: 50 },
       size: { width: 400, height: 300 },
-      createdAt: new Date().toISOString(),
+      createdAt: selectedVersion.createdAt,
       updatedAt: new Date().toISOString(),
+      metadata: { fromActivateSessionCanvas: true }
     };
     
-    console.log('✨ Canvas Store - 새로운 세션 Canvas 생성:', {
-      conversationId,
-      itemId: newItem.id,
-      selectedVersion: selectedVersion.versionNumber,
-      prompt: selectedVersion.prompt.substring(0, 50) + '...',
-    });
-    
-    // Canvas 활성화
-    set((state) => ({
-      items: [...state.items, newItem],
-      activeItemId: newItem.id,
-      isCanvasOpen: true
+    set(state => ({
+      items: [...state.items, newCanvas],
+      activeItemId: newCanvas.id,
+      isCanvasOpen: true,
+      lastConversationId: conversationId
     }));
     
-    return newItem.id;
+    console.log('✅ Canvas Store - activateSessionCanvas 완료 (새 Canvas):', newCanvas.id);
+    return newCanvas.id;
   },
   
   syncWithImageSession: (conversationId) => {
@@ -1334,13 +1558,16 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     }
     
     try {
-      // 🎯 중복 감지: Canvas 데이터 기반 고유 식별자 생성
-      const uniqueId = `${image_data.prompt}_${image_data.style || 'realistic'}_${image_data.size || '1K_1:1'}`;
+      // 🎯 중복 감지: Canvas 데이터 기반 고유 식별자 생성 (개선된 해시)
+      const uniqueId = `${image_data.prompt.trim()}_${image_data.style || 'realistic'}_${image_data.size || '1K_1:1'}`;
       console.log('🔍 Canvas Store - 고유 식별자 생성:', uniqueId);
       
-      // 이미지 URL 추출 (중복 확인용)
+      // 이미지 URL 추출 (중복 확인용) - 개선된 URL 추출 로직
       let imageUrl = '';
-      if (image_data.images && image_data.images.length > 0) {
+      if (image_data.imageUrl) {
+        // 직접 imageUrl 속성이 있는 경우
+        imageUrl = image_data.imageUrl;
+      } else if (image_data.images && image_data.images.length > 0) {
         const firstImage = image_data.images[0];
         imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url || '';
       } else if (image_data.generation_result?.images?.[0]) {
@@ -1348,31 +1575,77 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
         imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url || '';
       }
       
-      // 세션이 없으면 생성
+      console.log('🔗 Canvas Store - 추출된 이미지 URL:', imageUrl ? imageUrl.substring(0, 50) + '...' : 'URL 없음');
+      
+      // 🚨 DB 로딩 중이면 대기 (Race Condition 방지)
+      if (imageSessionStore.isLoadingSession(conversationId)) {
+        console.log('⏸️ DB 로딩 중이므로 Canvas→Session 동기화 대기');
+        let waitCount = 0;
+        while (imageSessionStore.isLoadingSession(conversationId) && waitCount < 10) {
+          await new Promise(resolve => setTimeout(resolve, 100)); // 100ms 대기
+          waitCount++;
+        }
+        console.log(`🔄 DB 로딩 대기 완료 (${waitCount * 100}ms)`);
+      }
+      
+      // 세션이 없으면 생성 (DB 로딩 완료 후)
       if (!imageSessionStore.hasSession(conversationId)) {
+        console.log('🆕 Canvas Store - 새 ImageSession 생성 시작:', conversationId);
         const theme = imageSessionStore.extractTheme(image_data.prompt);
         await imageSessionStore.createSessionHybrid(conversationId, theme, image_data.prompt);
         console.log('✅ Canvas Store - 새 ImageSession 생성 완료');
+      } else {
+        console.log('ℹ️ Canvas Store - 기존 ImageSession 발견:', {
+          conversationId,
+          versionsCount: imageSessionStore.getSession(conversationId)?.versions.length || 0
+        });
       }
       
-      // 🔍 정교한 중복 버전 검색 (엄격한 기준 적용)
+      // 🔍 정교한 중복 버전 검색 (강화된 기준 적용)
       const session = imageSessionStore.getSession(conversationId);
       if (session) {
+        console.log('🔍 Canvas Store - 중복 검사 시작:', {
+          conversationId,
+          existingVersions: session.versions.length,
+          searchPrompt: image_data.prompt.substring(0, 40),
+          searchImageUrl: imageUrl ? imageUrl.substring(-30) : 'URL 없음'
+        });
+        
         const existingVersion = session.versions.find(version => {
-          const versionId = `${version.prompt}_${version.style}_${version.size}`;
-          const urlMatch = version.imageUrl === imageUrl && imageUrl !== '' && imageUrl.length > 10; // URL이 유효할 때만
-          const contentMatch = versionId === uniqueId;
+          const versionUniqueId = `${version.prompt.trim()}_${version.style}_${version.size}`;
           
-          // 더 엄격한 중복 판정: URL이 완전히 같거나, 내용이 완전히 동일할 때만
-          const isRealDuplicate = (contentMatch && urlMatch) || // 내용과 URL 모두 동일
-                                  (urlMatch && !contentMatch && version.prompt.trim() === image_data.prompt.trim()); // URL 같고 프롬프트도 동일
+          // URL 매칭 (더 엄격한 조건)
+          const hasValidUrl = imageUrl && imageUrl.length > 20 && version.imageUrl && version.imageUrl.length > 20;
+          const urlMatch = hasValidUrl && version.imageUrl === imageUrl;
           
-          console.log('🔍 Canvas Store - 중복 검사:', {
-            versionId: version.id,
+          // 프롬프트 매칭 (공백 제거 후 비교)
+          const promptMatch = version.prompt.trim() === image_data.prompt.trim();
+          
+          // 전체 컨텐츠 매칭 (스타일 + 크기 포함)
+          const contentMatch = versionUniqueId === uniqueId;
+          
+          // 🎯 강화된 중복 판정 로직
+          let isRealDuplicate = false;
+          
+          if (urlMatch && promptMatch) {
+            // 최고 신뢰도: URL과 프롬프트 모두 정확히 일치
+            isRealDuplicate = true;
+          } else if (contentMatch && hasValidUrl && urlMatch) {
+            // 높은 신뢰도: 전체 컨텐츠와 URL 모두 일치
+            isRealDuplicate = true;
+          } else if (promptMatch && version.style === (image_data.style || 'realistic') && version.size === (image_data.size || '1K_1:1')) {
+            // 중간 신뢰도: 프롬프트, 스타일, 크기 모두 일치
+            isRealDuplicate = true;
+          }
+          
+          console.log('🔍 Canvas Store - 중복 검사 세부:', {
+            versionId: version.id.substring(0, 8),
             versionPrompt: version.prompt.substring(0, 30),
             currentPrompt: image_data.prompt.substring(0, 30),
+            promptMatch,
             contentMatch,
             urlMatch,
+            hasValidUrl,
             isRealDuplicate
           });
           
@@ -1380,33 +1653,80 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
         });
         
         if (existingVersion) {
-          console.log('🎯 Canvas Store - 실제 중복 버전 발견, 선택으로 변경:', existingVersion.id);
+          console.log('🎯 Canvas Store - 실제 중복 버전 발견, 선택으로 변경:', {
+            versionId: existingVersion.id,
+            versionNumber: existingVersion.versionNumber,
+            prompt: existingVersion.prompt.substring(0, 40)
+          });
           
-          // 새 버전 생성 대신 기존 버전 선택
-          imageSessionStore.selectVersionHybrid(conversationId, existingVersion.id);
-          return { action: 'selected_existing', versionId: existingVersion.id, reason: 'real_duplicate_detected' };
+          // 🛡️ DB 동기화 오류 방지를 위한 안전한 선택
+          try {
+            await imageSessionStore.selectVersionHybrid(conversationId, existingVersion.id);
+            return { action: 'selected_existing', versionId: existingVersion.id, reason: 'duplicate_detected_and_selected' };
+          } catch (selectError) {
+            console.warn('⚠️ Canvas Store - 기존 버전 선택 실패, 새 버전 생성으로 fallback:', selectError);
+            // 선택 실패 시 새 버전 생성으로 계속 진행
+          }
         } else {
-          console.log('🆕 Canvas Store - 중복 아님, 새 버전 생성 진행');
+          console.log('🆕 Canvas Store - 중복 없음 확인, 새 버전 생성 진행');
         }
       }
       
-      // 🆕 새 버전 추가 (중복이 아닌 경우에만)
-      const versionId = await imageSessionStore.addVersionHybrid(conversationId, {
-        prompt: image_data.prompt,
-        negativePrompt: image_data.negative_prompt || '',
-        style: image_data.style || 'realistic',
-        size: image_data.size || '1K_1:1',
-        imageUrl: imageUrl,
-        status: image_data.status === 'completed' ? 'completed' : 'generating',
-        isSelected: true
-      });
-      
-      console.log('✅ Canvas Store - 새 버전 생성 완료:', versionId);
-      return { action: 'created_new', versionId, reason: 'unique_content' };
+      // 🆕 새 버전 추가 (중복이 아닌 경우에만) - DB 동기화 오류 방지
+      try {
+        console.log('🎨 Canvas Store - 새 버전 생성 시작:', {
+          conversationId,
+          prompt: image_data.prompt.substring(0, 40),
+          style: image_data.style || 'realistic',
+          size: image_data.size || '1K_1:1',
+          hasImageUrl: !!imageUrl
+        });
+        
+        const versionId = await imageSessionStore.addVersionHybrid(conversationId, {
+          prompt: image_data.prompt,
+          negativePrompt: image_data.negative_prompt || '',
+          style: image_data.style || 'realistic',
+          size: image_data.size || '1K_1:1',
+          imageUrl: imageUrl,
+          status: image_data.status === 'completed' ? 'completed' : 'generating',
+          isSelected: true
+        });
+        
+        console.log('✅ Canvas Store - 새 버전 생성 완료:', versionId);
+        return { action: 'created_new', versionId, reason: 'unique_content' };
+        
+      } catch (versionCreateError) {
+        console.error('❌ Canvas Store - 새 버전 생성 실패:', versionCreateError);
+        
+        // 🛡️ Graceful Fallback: 메모리에서만 처리
+        console.log('🔄 Canvas Store - DB 동기화 실패, 메모리 전용 모드로 fallback');
+        
+        try {
+          // 메모리에서만 버전 생성
+          const fallbackVersionId = imageSessionStore.addVersion(conversationId, {
+            prompt: image_data.prompt,
+            negativePrompt: image_data.negative_prompt || '',
+            style: image_data.style || 'realistic',
+            size: image_data.size || '1K_1:1',
+            imageUrl: imageUrl,
+            status: image_data.status === 'completed' ? 'completed' : 'generating',
+            isSelected: true
+          });
+          
+          console.log('✅ Canvas Store - 메모리 전용 버전 생성 완료:', fallbackVersionId);
+          return { action: 'created_fallback', versionId: fallbackVersionId, reason: 'db_sync_failed_memory_only' };
+          
+        } catch (fallbackError) {
+          console.error('❌ Canvas Store - 메모리 전용 버전 생성도 실패:', fallbackError);
+          return { action: 'error', reason: `DB 및 메모리 버전 생성 모두 실패: ${fallbackError.message}` };
+        }
+      }
       
     } catch (error) {
       console.error('❌ Canvas Store - 내부 ImageSession Store 동기화 실패:', error);
-      return { action: 'error', reason: error.message };
+      
+      // 🛡️ Final Graceful Fallback
+      return { action: 'error', reason: `동기화 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`, fallback: true };
     }
   },
   
@@ -1439,6 +1759,147 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
       CanvasAutoSave.notifyChange(canvasId, canvasData);
     } catch (error) {
       console.error('❌ Canvas Store - Canvas 변경 알림 실패:', error);
+    }
+  },
+  
+  // 🔄 Canvas → ImageSession 역방향 동기화 (v4.1)
+  syncCanvasToImageSession: async (conversationId, canvasItems) => {
+    console.log('🔄 Canvas Store - Canvas → ImageSession 역방향 동기화 시작:', conversationId);
+    
+    const imageSessionStore = useImageSessionStore.getState();
+    
+    // Canvas 아이템 필터링 (파라미터로 전달되지 않은 경우 Store에서 추출)
+    const targetCanvasItems = canvasItems || get().items.filter(item => 
+      item.type === 'image' && 
+      (item.content as any)?.conversationId === conversationId
+    );
+    
+    console.log('🔍 Canvas Store - 역방향 동기화 대상:', {
+      conversationId,
+      canvasItemsCount: targetCanvasItems.length,
+      canvasItems: targetCanvasItems.map(item => ({
+        id: item.id,
+        hasImageUrl: !!(item.content as any)?.imageUrl,
+        versionNumber: (item.content as any)?.versionNumber || 'unknown'
+      }))
+    });
+    
+    if (targetCanvasItems.length === 0) {
+      console.log('ℹ️ Canvas Store - 동기화할 Canvas 아이템 없음');
+      return { action: 'no_items', versionsAdded: 0 };
+    }
+    
+    try {
+      let versionsAdded = 0;
+      
+      // 세션이 없으면 생성
+      if (!imageSessionStore.hasSession(conversationId)) {
+        console.log('🆕 Canvas Store - ImageSession 생성 (역방향 동기화용)');
+        const firstCanvas = targetCanvasItems[0];
+        const firstContent = firstCanvas.content as any;
+        
+        const theme = firstContent.style || '이미지 생성';
+        const basePrompt = firstContent.prompt || '사용자 요청';
+        
+        await imageSessionStore.createSessionHybrid(conversationId, theme, basePrompt);
+        console.log('✅ Canvas Store - 역방향 동기화용 ImageSession 생성 완료');
+      }
+      
+      const session = imageSessionStore.getSession(conversationId);
+      if (!session) {
+        console.error('❌ Canvas Store - ImageSession 생성 실패');
+        return { action: 'session_creation_failed', versionsAdded: 0 };
+      }
+      
+      // Canvas 아이템들을 versionNumber 순으로 정렬
+      const sortedCanvasItems = targetCanvasItems.sort((a, b) => {
+        const aVersionNumber = (a.content as any)?.versionNumber || 1;
+        const bVersionNumber = (b.content as any)?.versionNumber || 1;
+        return aVersionNumber - bVersionNumber;
+      });
+      
+      // Canvas 아이템을 ImageVersion으로 변환 및 추가
+      for (const [index, canvasItem] of sortedCanvasItems.entries()) {
+        const canvasContent = canvasItem.content as any;
+        
+        // 🔍 중복 확인: 이미 존재하는 버전인지 체크
+        const existingVersion = session.versions.find(version => {
+          // URL 기반 매칭 (가장 확실한 방법)
+          const urlMatch = version.imageUrl && canvasContent.imageUrl && 
+                          version.imageUrl === canvasContent.imageUrl;
+          
+          // 프롬프트 + 스타일 + 크기 기반 매칭
+          const contentMatch = version.prompt.trim() === (canvasContent.prompt || '').trim() &&
+                              version.style === (canvasContent.style || 'realistic') &&
+                              version.size === (canvasContent.size || '1K_1:1');
+          
+          return urlMatch || contentMatch;
+        });
+        
+        if (existingVersion) {
+          console.log(`⚠️ Canvas Store - Canvas 아이템 ${index + 1} 이미 존재하는 버전:`, existingVersion.id);
+          continue; // 중복이므로 건너뜀
+        }
+        
+        // 🆕 새로운 버전으로 추가
+        console.log(`🆕 Canvas Store - Canvas 아이템 ${index + 1}를 ImageVersion으로 변환 중`);
+        
+        try {
+          const newVersionId = await imageSessionStore.addVersionHybrid(conversationId, {
+            prompt: canvasContent.prompt || '이미지 생성',
+            negativePrompt: canvasContent.negativePrompt || '',
+            style: canvasContent.style || 'realistic',
+            size: canvasContent.size || '1K_1:1',
+            imageUrl: canvasContent.imageUrl || '',
+            status: (canvasContent.status === 'completed') ? 'completed' : 'generating',
+            isSelected: false // 나중에 선택 처리
+          });
+          
+          versionsAdded++;
+          console.log(`✅ Canvas Store - 새 ImageVersion 생성 완료: ${newVersionId} (${index + 1}/${sortedCanvasItems.length})`);
+          
+        } catch (versionAddError) {
+          console.error(`❌ Canvas Store - Canvas 아이템 ${index + 1} 변환 실패:`, versionAddError);
+          // 실패해도 계속 진행
+        }
+      }
+      
+      // 🎯 가장 최신 버전 선택
+      if (versionsAdded > 0) {
+        const updatedSession = imageSessionStore.getSession(conversationId);
+        if (updatedSession && updatedSession.versions.length > 0) {
+          const latestVersion = updatedSession.versions.reduce((latest, current) =>
+            latest.versionNumber > current.versionNumber ? latest : current
+          );
+          
+          try {
+            await imageSessionStore.selectVersionHybrid(conversationId, latestVersion.id);
+            console.log('🎯 Canvas Store - 최신 버전 자동 선택:', latestVersion.versionNumber);
+          } catch (selectError) {
+            console.warn('⚠️ Canvas Store - 최신 버전 선택 실패 (무시 가능):', selectError);
+          }
+        }
+      }
+      
+      console.log('✅ Canvas Store - Canvas → ImageSession 역방향 동기화 완료:', {
+        conversationId,
+        totalCanvasItems: targetCanvasItems.length,
+        versionsAdded,
+        finalVersionCount: imageSessionStore.getSession(conversationId)?.versions.length || 0
+      });
+      
+      return { 
+        action: versionsAdded > 0 ? 'versions_added' : 'all_existed', 
+        versionsAdded 
+      };
+      
+    } catch (error) {
+      console.error('❌ Canvas Store - Canvas → ImageSession 역방향 동기화 실패:', error);
+      return { 
+        action: 'error', 
+        versionsAdded: 0,
+        error: error instanceof Error ? error.message : '알 수 없는 오류'
+      };
     }
   },
 
