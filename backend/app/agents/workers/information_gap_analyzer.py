@@ -103,10 +103,10 @@ class InformationGapAnalyzer(BaseAgent):
         try:
             # 진행 상태 알림
             if progress_callback:
-                progress_callback("사용자 질문 분석 중...", 20, {
-                    "step_id": "question_analysis",
-                    "step_name": "질문 분석",
-                    "description": "질문의 의도와 필요 정보를 분석합니다"
+                await progress_callback({
+                    "step": "question_analysis",
+                    "message": "사용자 질문 분석 중...",
+                    "progress": 20
                 })
             
             # 질문 분석 및 정보 부족 식별
@@ -117,10 +117,10 @@ class InformationGapAnalyzer(BaseAgent):
             )
             
             if progress_callback:
-                progress_callback("정보 부족 분석 완료", 80, {
-                    "step_id": "gap_analysis_complete", 
-                    "step_name": "분석 완료",
-                    "description": f"{'추가 정보 필요' if gap_analysis.has_gaps else '정보 충족'}"
+                await progress_callback({
+                    "step": "gap_analysis_complete",
+                    "message": "정보 부족 분석 완료",
+                    "progress": 80
                 })
             
             # 결과 생성

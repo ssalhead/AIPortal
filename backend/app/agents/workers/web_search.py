@@ -172,10 +172,10 @@ class WebSearchAgent(BaseAgent):
             try:
                 # 0단계: URL 정보 분석 (5%)
                 if progress_callback:
-                    progress_callback("사용자 요청 분석 중...", 5, {
-                        "step_id": "query_analysis",
-                        "step_name": "검색어 분석",
-                        "description": "사용자 질문을 분석하고 검색 키워드를 추출합니다"
+                    await progress_callback({
+                        "step": "query_analysis",
+                        "message": "사용자 요청 분석 중...",
+                        "progress": 5
                     })
                 url_info = self._extract_url_info(input_data.query)
                 
@@ -186,47 +186,46 @@ class WebSearchAgent(BaseAgent):
                         "site_specific": "사이트별 검색어 분석 및 생성 중...",
                         "url_crawl": "URL 크롤링 검색어 분석 및 생성 중..."
                     }
-                    progress_callback(search_type_msg.get(url_info["search_type"], "검색어 분석 및 생성 중..."), 15, {
-                        "step_id": "query_generation",
-                        "step_name": "검색 쿼리 생성",
-                        "description": "최적화된 검색 쿼리를 생성합니다"
+                    await progress_callback({
+                        "step": "query_generation",
+                        "message": search_type_msg.get(url_info["search_type"], "검색어 분석 및 생성 중..."),
+                        "progress": 15
                     })
                 search_queries = await self._generate_multiple_search_queries(input_data.query, model, url_info, input_data.conversation_context)
                 
                 # 2단계: 병렬 웹 검색 실행 (60%)
                 if progress_callback:
-                    progress_callback(f"다중 검색 실행 중... ({len(search_queries)}개 검색어)", 60, {
-                        "step_id": "parallel_search",
-                        "step_name": "병렬 웹 검색",
-                        "description": "여러 검색 엔진에서 동시에 검색을 수행합니다",
-                        "search_queries": [q.query for q in search_queries]
+                    await progress_callback({
+                        "step": "parallel_search",
+                        "message": f"다중 검색 실행 중... ({len(search_queries)}개 검색어)",
+                        "progress": 60
                     })
                 all_search_results = await self._execute_parallel_searches(search_queries, session, progress_callback, conversation_context, original_query)
                 
                 # 3단계: 결과 통합 및 중복 제거 (75%)
                 if progress_callback:
-                    progress_callback("검색 결과 통합 및 필터링 중...", 75, {
-                        "step_id": "result_filtering",
-                        "step_name": "결과 필터링",
-                        "description": "검색 결과의 품질을 평가하고 필터링합니다"
+                    await progress_callback({
+                        "step": "result_filtering",
+                        "message": "검색 결과 통합 및 필터링 중...",
+                        "progress": 75
                     })
                 integrated_results = await self._integrate_and_deduplicate_results(all_search_results, input_data.query)
                 
                 # 4단계: 지능형 랭킹 적용 (85%)
                 if progress_callback:
-                    progress_callback("검색 결과 품질 평가 및 랭킹 중...", 85, {
-                        "step_id": "result_ranking",
-                        "step_name": "결과 순위화",
-                        "description": "관련성과 신뢰도에 따라 결과를 순위화합니다"
+                    await progress_callback({
+                        "step": "result_ranking",
+                        "message": "검색 결과 품질 평가 및 랭킹 중...",
+                        "progress": 85
                     })
                 ranked_results = await self._apply_intelligent_ranking(integrated_results, input_data.query, model)
                 
                 # 5단계: LLM 기반 통합 답변 생성 (95%)
                 if progress_callback:
-                    progress_callback("AI 분석 및 통합 답변 생성 중...", 95, {
-                        "step_id": "response_generation",
-                        "step_name": "AI 답변 생성",
-                        "description": "검색 결과를 바탕으로 종합적인 답변을 생성합니다"
+                    await progress_callback({
+                        "step": "response_generation",
+                        "message": "AI 분석 및 통합 답변 생성 중...",
+                        "progress": 95
                     })
                 enhanced_summary = await self._generate_enhanced_response(
                     original_query=input_data.query,
@@ -568,8 +567,12 @@ JSON 형태로만 응답해주세요.
                 # 진행 상태 업데이트
                 if progress_callback:
                     base_progress = 40 + (task_index / total_tasks) * 20  # 40-60% 범위
-                    if search_query.search_type == "url_crawl":
-                        progress_callback(f"'{search_query.target_url}' 크롤링 중...", base_progress)
+                    if search_query.search_type == "url_crawl" and progress_callback:
+                        await progress_callback({
+                            "step": "url_crawl",
+                            "message": f"'{search_query.target_url}' 크롤링 중...",
+                            "progress": int(base_progress)
+                        })
                     else:
                         # 맥락 통합 검색어 표시
                         display_query = search_query.query
@@ -594,7 +597,12 @@ JSON 형태로만 응답해주세요.
                             'current_search_query': display_query
                         }
                         
-                        progress_callback(f"'{display_query}' 검색 중...", base_progress, metadata)
+                        if progress_callback:
+                            await progress_callback({
+                                "step": "search_execution",
+                                "message": f"'{display_query}' 검색 중...",
+                                "progress": int(base_progress)
+                            })
                 
                 results_dict = []
                 

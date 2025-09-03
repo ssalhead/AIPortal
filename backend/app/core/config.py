@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     
+    # Vertex AI 설정
+    GOOGLE_CLOUD_PROJECT: Optional[str] = None
+    GOOGLE_CLOUD_LOCATION: str = "us-central1"
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
+    
+    # Vertex AI 활성화 여부 (자동 감지)
+    @property
+    def use_vertex_ai(self) -> bool:
+        """Vertex AI 사용 가능 여부 자동 감지"""
+        return bool(self.GOOGLE_CLOUD_PROJECT and self.GOOGLE_APPLICATION_CREDENTIALS)
+    
     # Google Custom Search 설정
     GOOGLE_CSE_ID: Optional[str] = None
     
@@ -72,6 +83,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-here-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    
+    # Canvas 암호화 설정
+    CANVAS_ENCRYPTION_KEY: str = "canvas-encryption-key-change-in-production-2025"
     
     # Mock 인증 설정 (개발용)
     MOCK_AUTH_ENABLED: bool = True
@@ -108,6 +122,10 @@ class Settings(BaseSettings):
 
 # 설정 인스턴스 생성
 settings = Settings()
+
+def get_settings() -> Settings:
+    """설정 인스턴스 반환 (캐시된 싱글톤)"""
+    return settings
 
 # 초기화 직후 중요 설정값들 로깅
 import logging

@@ -13,7 +13,7 @@ from app.utils.streaming import split_response_into_natural_chunks, StreamingCon
 from app.agents.base import AgentInput
 from app.agents.supervisor import supervisor_agent
 from app.agents.workers.web_search import web_search_agent
-from app.agents.workers.canvas import canvas_agent
+from app.agents.workers.simple_canvas import SimpleCanvasAgent
 from app.services.conversation_context_service import universal_context_analyzer
 
 logger = get_logger(__name__)
@@ -27,10 +27,11 @@ class AgentService:
     
     def __init__(self):
         self.supervisor = supervisor_agent
+        self.simple_canvas_agent = SimpleCanvasAgent()
         self.agents = {
             "supervisor": supervisor_agent,
             "web_search": web_search_agent,
-            "canvas": canvas_agent,
+            "canvas": self.simple_canvas_agent,
         }
         
         # 스트리밍 설정 (Gemini 스타일 "스르륵" 타이핑 효과)

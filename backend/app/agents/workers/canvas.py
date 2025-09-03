@@ -8,11 +8,18 @@ import asyncio
 from typing import Dict, Any, List, Optional, Callable
 import logging
 from datetime import datetime
+from uuid import UUID
 import time
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.agents.llm_router import llm_router
 from app.services.image_generation_service import image_generation_service
+from app.services.canvas_workflow_dispatcher import (
+    CanvasWorkflowDispatcher, 
+    ImageGenerationRequest, 
+    RequestSource,
+    WorkflowMode
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +33,7 @@ class CanvasAgent(BaseAgent):
     
     def __init__(self):
         super().__init__(agent_id="canvas", name=self.name, description=self.description)
+        self.workflow_dispatcher = CanvasWorkflowDispatcher()
         
     async def execute(self, input_data: AgentInput, model: str = "gemini", progress_callback: Optional[Callable] = None) -> AgentOutput:
         """Canvas 콘텐츠 생성 실행"""
@@ -176,182 +184,125 @@ JSON 형식으로 응답해주세요:
         }
     
     async def _handle_image_generation(self, input_data: AgentInput, model: str, start_time: float, progress_callback: Optional[Callable] = None) -> AgentOutput:
-        """이미지 생성 처리"""
+        """이미지 생성 처리 - CREATE/EDIT 모드 통합"""
         try:
-            # 사용자 ID 가져오기
-            user_id = input_data.context.get('user_id', 'anonymous') if input_data.context else 'anonymous'
+            logger.info("🎨 Canvas 이미지 생성 요청 처리 시작")
+            
+            # 컨텍스트에서 필수 정보 추출
+            context = input_data.context or {}
+            user_id = context.get('user_id', 'anonymous')
+            conversation_id = context.get('conversation_id')
+            db_session = context.get('db_session')  # 데이터베이스 세션
+            
+            if not conversation_id:
+                raise ValueError("conversation_id가 필요합니다")
+            
+            if not db_session:
+                raise ValueError("db_session이 필요합니다")
             
             # 진행 상태 업데이트
             if progress_callback:
                 await progress_callback({
-                    "step": "image_analysis",
-                    "message": "이미지 생성 요청 분석 중...",
-                    "progress": 30
+                    "step": "request_analysis",
+                    "message": "요청 분석 및 모드 결정 중...",
+                    "progress": 20
                 })
             
-            # 이미지 생성 파라미터 추출 (진화 지원)
+            # Canvas 관련 컨텍스트 확인 (EDIT 모드 판단용)
+            canvas_id = context.get('canvas_id')
+            reference_image_id = context.get('reference_image_id') 
+            evolution_type = context.get('evolution_type', 'variation')
+            
+            # 요청 소스 결정
+            request_source = RequestSource.CANVAS if canvas_id else RequestSource.CHAT
+            
+            # 이미지 생성 파라미터 추출
             image_params = await self._extract_image_parameters(input_data, model)
             
+            # ImageGenerationRequest 생성
+            if request_source == RequestSource.CANVAS and canvas_id and reference_image_id:
+                # EDIT 모드: Canvas 내에서 이미지 진화
+                logger.info(f"📝 EDIT 모드 - Canvas: {canvas_id}, 참조 이미지: {reference_image_id}")
+                
+                generation_request = ImageGenerationRequest(
+                    conversation_id=UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id,
+                    user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
+                    prompt=image_params["prompt"],
+                    source=RequestSource.CANVAS,
+                    style=image_params["style"],
+                    size=image_params["size"],
+                    canvas_id=UUID(canvas_id) if isinstance(canvas_id, str) else canvas_id,
+                    reference_image_id=UUID(reference_image_id) if isinstance(reference_image_id, str) else reference_image_id,
+                    evolution_type=evolution_type,
+                    edit_mode_type=context.get('edit_mode_type', 'EDIT_MODE_INPAINT_INSERTION'),
+                    generation_params={
+                        "num_images": image_params["num_images"],
+                        "model": "imagen-4"
+                    }
+                )
+            else:
+                # CREATE 모드: 새로운 Canvas 생성
+                logger.info(f"🆕 CREATE 모드 - 새 Canvas 생성")
+                
+                generation_request = ImageGenerationRequest(
+                    conversation_id=UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id,
+                    user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
+                    prompt=image_params["prompt"],
+                    source=RequestSource.CHAT,
+                    style=image_params["style"],
+                    size=image_params["size"],
+                    generation_params={
+                        "num_images": image_params["num_images"],
+                        "model": "imagen-4"
+                    }
+                )
+            
+            # 진행 상태 업데이트
+            if progress_callback:
+                mode = "이미지 진화" if request_source == RequestSource.CANVAS else "새 이미지 생성"
+                await progress_callback({
+                    "step": "workflow_dispatch",
+                    "message": f"{mode} 처리 중...",
+                    "progress": 40
+                })
+            
+            # 워크플로우 디스패처를 통한 처리
+            dispatch_result = await self.workflow_dispatcher.dispatch_image_generation_request(
+                db=db_session,
+                request=generation_request
+            )
+            
+            if not dispatch_result.get("success"):
+                raise Exception(f"이미지 생성 실패: {dispatch_result.get('error')}")
+            
+            logger.info(f"✅ 워크플로우 디스패처 처리 완료: {dispatch_result.get('workflow_mode')}")
+            
             # 진행 상태 업데이트
             if progress_callback:
                 await progress_callback({
-                    "step": "image_generation",
-                    "message": f"{image_params['style']} 스타일로 이미지 생성 중...",
-                    "progress": 50
+                    "step": "image_completion",
+                    "message": "이미지 생성 완료!",
+                    "progress": 100
                 })
-            
-            # Imagen 4 서비스 호출
-            job_id = str(uuid.uuid4())
-            initial_result = await image_generation_service.generate_image(
-                job_id=job_id,
-                user_id=str(user_id),
-                prompt=image_params["prompt"],
-                style=image_params["style"],
-                size=image_params["size"],
-                num_images=image_params["num_images"],
-                model="imagen-4"
-            )
-            
-            # 이미지 생성 완료까지 대기 (최대 2분)
-            max_wait_time = 120  # 120초
-            check_interval = 2   # 2초마다 확인
-            waited_time = 0
-            
-            logger.info(f"이미지 생성 대기 시작, Job ID: {job_id}")
-            
-            while waited_time < max_wait_time:
-                # 진행 상태 확인
-                current_status = await image_generation_service.get_job_status(job_id, str(user_id))
-                
-                if current_status is not None:
-                    if current_status.get("status") == "completed":
-                        logger.info(f"이미지 생성 완료 확인: {job_id}")
-                        result = current_status
-                        break
-                    elif current_status.get("status") == "failed":
-                        logger.error(f"이미지 생성 실패: {job_id}")
-                        result = current_status
-                        break
-                else:
-                    logger.warning(f"작업 상태를 찾을 수 없음: {job_id}")
-                
-                # 대기 시간 업데이트
-                await asyncio.sleep(check_interval)
-                waited_time += check_interval
-                
-                # 진행률 업데이트 (50% ~ 95%)
-                progress = min(95, 50 + (waited_time / max_wait_time * 45))
-                if progress_callback:
-                    await progress_callback({
-                        "step": "image_generation",
-                        "message": f"이미지 생성 중... ({waited_time}초)",
-                        "progress": int(progress)
-                    })
-            
-            # 대기 시간 초과 시 현재 상태로 처리
-            if waited_time >= max_wait_time:
-                logger.warning(f"이미지 생성 대기 시간 초과: {job_id}")
-                timeout_status = await image_generation_service.get_job_status(job_id, str(user_id))
-                result = timeout_status if timeout_status is not None else initial_result
-            
-            # 이미지 생성 완료 대기 및 진행 상황 업데이트
-            if progress_callback and result and isinstance(result, dict):
-                initial_status = result.get("status", "processing")
-                if initial_status == "processing":
-                    # 이미지 생성 완료 대기 (최대 60초)
-                    await progress_callback({
-                        "step": "image_processing",
-                        "message": "이미지 처리 중...",
-                        "progress": 50
-                    })
-                    
-                    # 완료 상태까지 대기
-                    max_wait_time = 60  # 최대 60초 대기
-                    wait_interval = 2   # 2초마다 확인
-                    waited_time = 0
-                    
-                    while waited_time < max_wait_time:
-                        await asyncio.sleep(wait_interval)
-                        waited_time += wait_interval
-                        
-                        # 상태 재확인
-                        status_result = await self.image_service.get_generation_status(job_id)
-                        logger.info(f"🎨 이미지 생성 상태 확인 - job_id: {job_id}, 대기시간: {waited_time}초, 상태: {status_result.get('status', 'unknown')}")
-                        
-                        if status_result.get("status") == "completed":
-                            result = status_result  # 완성된 결과로 업데이트
-                            logger.info(f"🎨 이미지 생성 완료! job_id: {job_id}, 이미지 개수: {len(status_result.get('images', []))}")
-                            await progress_callback({
-                                "step": "image_completion",
-                                "message": "이미지 생성 완료",
-                                "progress": 100
-                            })
-                            break
-                        elif status_result.get("status") == "failed":
-                            logger.error(f"🎨 이미지 생성 실패 - job_id: {job_id}")
-                            break
-                        else:
-                            # 진행률 업데이트
-                            progress = min(50 + (waited_time / max_wait_time * 40), 90)
-                            await progress_callback({
-                                "step": "image_processing",
-                                "message": f"이미지 처리 중... ({waited_time}초)",
-                                "progress": int(progress)
-                            })
-                    
-                    if waited_time >= max_wait_time:
-                        logger.warning(f"🎨 이미지 생성 타임아웃 - job_id: {job_id}")
-                        await progress_callback({
-                            "step": "image_timeout", 
-                            "message": "이미지 생성이 시간이 오래 걸리고 있습니다",
-                            "progress": 90
-                        })
-                else:
-                    await progress_callback({
-                        "step": "image_completion",
-                        "message": "이미지 생성 완료",
-                        "progress": 100
-                    })
             
             execution_time = int((time.time() - start_time) * 1000)
             
-            # Canvas 활성화 응답 생성
-            canvas_response = self._create_image_canvas_response(
-                image_params["prompt"], 
-                result, 
-                image_params
+            # Canvas 응답 생성 (CREATE vs EDIT에 따라 다른 메시지)
+            workflow_mode = dispatch_result.get("workflow_mode", "unknown")
+            canvas_response = self._create_workflow_canvas_response(
+                dispatch_result, 
+                image_params, 
+                workflow_mode
             )
             
-            # Canvas 데이터 구조 생성 - 생성된 이미지 URL 직접 포함
-            images = result.get("images", []) if isinstance(result, dict) else []
-            image_urls = [img.get("url") for img in images if isinstance(img, dict) and img.get("url")]
+            # Canvas 데이터 구조 생성
+            canvas_data = self._create_workflow_canvas_data(
+                dispatch_result,
+                image_params,
+                workflow_mode
+            )
             
-            canvas_data = {
-                "type": "image",
-                "title": f"AI 이미지: {image_params['prompt'][:50]}",
-                "description": canvas_response,
-                "image_data": {
-                    "job_id": job_id,
-                    "prompt": image_params["prompt"],
-                    "style": image_params["style"],
-                    "size": image_params["size"],
-                    "num_images": image_params["num_images"],
-                    "status": result.get("status", "processing") if isinstance(result, dict) else "processing",
-                    "images": images,
-                    "image_urls": image_urls,  # 직접 이미지 URL 포함
-                    "generation_result": result
-                },
-                "metadata": {
-                    "created_by": "canvas_agent",
-                    "canvas_type": "image_generation"
-                }
-            }
-            
-            result_status = result.get('status') if isinstance(result, dict) else 'unknown'
-            logger.info(f"Canvas 데이터 생성 완료: status={result_status}, images={len(images)}, urls={len(image_urls)}")
-            
-            # 🔥 ImageSession 관리를 프론트엔드로 완전 이관 - 중복 생성 방지
-            logger.info("Canvas Agent - ImageSession 관리 제거됨, 프론트엔드에서 단일 소스 관리")
+            logger.info(f"✅ Canvas 에이전트 이미지 생성 완료: {workflow_mode} 모드")
             
             return AgentOutput(
                 result=canvas_response,
@@ -359,7 +310,10 @@ JSON 형식으로 응답해주세요:
                     "canvas_type": "이미지",
                     "has_visual_content": True,
                     "image_generation": True,
-                    "job_id": job_id
+                    "workflow_mode": workflow_mode,
+                    "canvas_id": dispatch_result.get("canvas_id"),
+                    "canvas_version": dispatch_result.get("canvas_version"),
+                    "request_source": dispatch_result.get("request_source")
                 },
                 execution_time_ms=execution_time,
                 agent_id=self.agent_id,
@@ -490,31 +444,117 @@ num_images: [개수]
                 "num_images": 1
             }
     
-    def _create_image_canvas_response(self, prompt: str, generation_result: Dict[str, Any], image_params: Dict[str, Any]) -> str:
-        """이미지 Canvas 활성화 응답 생성"""
-        # 안전한 데이터 추출
-        if isinstance(generation_result, dict):
-            status = generation_result.get("status", "processing")
-            images = generation_result.get("images", [])
-        else:
-            status = "processing"
-            images = []
+    def _create_workflow_canvas_response(self, dispatch_result: Dict[str, Any], image_params: Dict[str, Any], workflow_mode: str) -> str:
+        """워크플로우 결과 기반 Canvas 응답 생성"""
+        prompt = image_params.get("prompt", "")
+        style = image_params.get("style", "realistic")
         
-        if status == "completed":
-            response = f"🎨 **Canvas 모드 활성화 - AI 이미지 생성**\n\n"
+        if workflow_mode == "create":
+            # CREATE 모드: 새 Canvas 생성
+            response = f"🎨 **새 Canvas 생성 - AI 이미지 생성**\n\n"
             response += f"**요청**: {prompt}\n"
-            response += f"**스타일**: {image_params['style']}\n"
-            response += f"**크기**: {image_params['size']}\n"
-            response += f"**생성된 이미지**: {len(images)}개\n\n"
-            response += "Canvas에서 생성된 이미지를 확인하고 편집할 수 있습니다!"
+            response += f"**스타일**: {style}\n"
+            response += f"**Canvas ID**: {dispatch_result.get('canvas_id', 'N/A')}\n"
+            response += f"**버전**: v{dispatch_result.get('canvas_version', 1)}\n\n"
+            
+            if dispatch_result.get("success"):
+                image_urls = dispatch_result.get("image_urls", [])
+                response += f"**생성된 이미지**: {len(image_urls)}개\n\n"
+                response += "✅ 새로운 Canvas가 생성되었습니다! Canvas에서 이미지를 확인하고 추가 편집이 가능합니다."
+            else:
+                response += "❌ 이미지 생성 중 오류가 발생했습니다."
+                
+        elif workflow_mode == "edit":
+            # EDIT 모드: Canvas 내 이미지 진화
+            response = f"✏️ **Canvas 이미지 진화 - AI 편집**\n\n"
+            response += f"**새 프롬프트**: {prompt}\n"
+            response += f"**스타일**: {style}\n"
+            response += f"**Canvas ID**: {dispatch_result.get('canvas_id', 'N/A')}\n"
+            response += f"**새 버전**: v{dispatch_result.get('canvas_version', 'N/A')}\n"
+            response += f"**진화 타입**: {dispatch_result.get('evolution_type', 'variation')}\n\n"
+            
+            if dispatch_result.get("success"):
+                image_urls = dispatch_result.get("image_urls", [])
+                response += f"**진화된 이미지**: {len(image_urls)}개\n\n"
+                response += "✅ 이미지 진화가 완료되었습니다! Canvas에서 새로운 버전을 확인할 수 있습니다."
+            else:
+                response += "❌ 이미지 진화 중 오류가 발생했습니다."
+        
         else:
-            response = f"🎨 **Canvas 모드 활성화 - AI 이미지 생성**\n\n"
+            # 알 수 없는 모드
+            response = f"🔄 **Canvas 이미지 처리**\n\n"
             response += f"**요청**: {prompt}\n"
-            response += f"**스타일**: {image_params['style']}\n"
-            response += f"**상태**: 이미지 생성 중...\n\n"
-            response += "잠시 후 Canvas에서 결과를 확인할 수 있습니다."
+            response += f"**모드**: {workflow_mode}\n\n"
+            
+            if dispatch_result.get("success"):
+                response += "✅ 이미지 처리가 완료되었습니다."
+            else:
+                response += f"❌ 처리 중 오류: {dispatch_result.get('error', '알 수 없음')}"
         
         return response
+    
+    def _create_workflow_canvas_data(self, dispatch_result: Dict[str, Any], image_params: Dict[str, Any], workflow_mode: str) -> Dict[str, Any]:
+        """워크플로우 결과 기반 Canvas 데이터 생성"""
+        
+        # 기본 Canvas 데이터 구조
+        canvas_data = {
+            "type": "image",
+            "title": f"AI 이미지: {image_params.get('prompt', '')[:50]}",
+            "description": f"{workflow_mode.title()} 모드로 생성된 이미지",
+            "workflow_info": {
+                "mode": workflow_mode,
+                "canvas_id": dispatch_result.get("canvas_id"),
+                "canvas_version": dispatch_result.get("canvas_version"),
+                "success": dispatch_result.get("success", False),
+                "request_source": dispatch_result.get("request_source"),
+                "dispatch_timestamp": dispatch_result.get("dispatch_timestamp")
+            },
+            "image_data": {
+                "prompt": image_params.get("prompt"),
+                "style": image_params.get("style"),
+                "size": image_params.get("size"),
+                "num_images": image_params.get("num_images", 1),
+                "status": "completed" if dispatch_result.get("success") else "failed"
+            },
+            "metadata": {
+                "created_by": "canvas_agent_v2",
+                "canvas_type": "image_generation",
+                "workflow_mode": workflow_mode
+            }
+        }
+        
+        # 성공적인 결과인 경우 이미지 URL 추가
+        if dispatch_result.get("success"):
+            image_urls = dispatch_result.get("image_urls", [])
+            primary_image_url = dispatch_result.get("primary_image_url")
+            
+            canvas_data["image_data"].update({
+                "images": [{"url": url} for url in image_urls] if image_urls else [],
+                "image_urls": image_urls,
+                "primary_image_url": primary_image_url,
+                "generation_result": {
+                    "canvas_id": dispatch_result.get("canvas_id"),
+                    "image_history_id": dispatch_result.get("image_history_id"),
+                    "status": "completed"
+                }
+            })
+            
+            # EDIT 모드인 경우 추가 정보
+            if workflow_mode == "edit":
+                canvas_data["edit_info"] = {
+                    "parent_image_id": dispatch_result.get("parent_image_id"),
+                    "evolution_type": dispatch_result.get("evolution_type"),
+                    "reference_image_id": dispatch_result.get("parent_image_id")  # 호환성
+                }
+        
+        else:
+            # 실패한 경우 오류 정보 추가
+            canvas_data["error_info"] = {
+                "error_message": dispatch_result.get("error", "Unknown error"),
+                "failed_at": workflow_mode
+            }
+        
+        return canvas_data
     
     # 🔥 _add_to_image_session 메서드 제거 - 중복 생성 방지
     # ImageSession 관리는 프론트엔드에서 단일 소스로 처리
@@ -525,7 +565,10 @@ num_images: [개수]
     def get_capabilities(self) -> List[str]:
         """Canvas 에이전트 기능 목록 반환"""
         return [
-            "AI 이미지 생성 (Imagen 4)",
+            "AI 이미지 생성 (Imagen 4) - CREATE 모드",
+            "AI 이미지 편집 (Imagen 4) - EDIT 모드", 
+            "Canvas 기반 이미지 진화 시스템",
+            "Request-Based Canvas 워크플로우",
             "마인드맵 생성",
             "플로우차트 생성", 
             "다이어그램 생성",
