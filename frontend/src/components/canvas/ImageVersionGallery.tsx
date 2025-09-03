@@ -74,8 +74,30 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
         deficit: canvasItems.length - currentVersionsCount
       });
       
-      // 🔄 Canvas → ImageSession 역방향 동기화 실행 (비동기)
-      canvasStore.syncCanvasToImageSession(conversationId, canvasItems)
+      // 🚫 동기화 진행 중인지 확인 - 중복 실행 방지
+      if (canvasStore.isSyncInProgress(conversationId)) {
+        console.log('⏸️ ImageVersionGallery - 이미 동기화 진행 중, 스킵:', conversationId);
+        return;
+      }
+      
+      // 🚫 이미 처리된 Canvas 아이템인지 확인 - 중복 처리 방지  
+      const unprocessedCanvasItems = canvasItems.filter(item => 
+        !canvasStore.isCanvasProcessed(conversationId, item.id)
+      );
+      
+      if (unprocessedCanvasItems.length === 0) {
+        console.log('✅ ImageVersionGallery - 모든 Canvas 아이템이 이미 처리됨, 동기화 스킵');
+        return;
+      }
+      
+      console.log('📋 ImageVersionGallery - 처리할 Canvas 아이템:', {
+        total: canvasItems.length,
+        unprocessed: unprocessedCanvasItems.length,
+        unprocessedIds: unprocessedCanvasItems.map(item => item.id)
+      });
+      
+      // 🔄 Canvas → ImageSession 역방향 동기화 실행 (디바운싱 적용)
+      canvasStore.debouncedSyncCanvasToImageSession(conversationId, unprocessedCanvasItems, 200)
         .then((syncResult) => {
           console.log('✅ ImageVersionGallery - Canvas → ImageSession 동기화 완료:', syncResult);
           
@@ -83,9 +105,6 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
             // 동기화 후 ImageSession → Canvas 정방향 동기화도 실행
             canvasStore.syncCanvasWithImageSession(conversationId);
             console.log('🔄 ImageVersionGallery - 양방향 동기화 완료');
-            
-            // 🏁 ImageVersionGallery에서도 동기화 완료 플래그 설정
-            imageSessionStore.markSyncCompleted(conversationId);
           }
         })
         .catch((syncError) => {
@@ -119,9 +138,15 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
       
       const newSession = imageSessionStore.createSession(conversationId, theme, basePrompt);
       
-      // 🔄 모든 Canvas 아이템을 버전으로 변환
+      // 🔄 Canvas 아이템을 버전으로 변환 (v4.1 중복 방지)
       sortedCanvasItems.forEach((canvas, index) => {
         const content = canvas.content as any;
+        
+        // 🚫 이미 처리된 Canvas ID인지 확인 - ImageSession Store 중복 방지
+        if (imageSessionStore.isCanvasIdProcessed(conversationId, canvas.id)) {
+          console.log(`⏸️ ImageVersionGallery - Canvas ID 이미 처리됨, 스킵: ${canvas.id.substring(0, 20)}`);
+          return;
+        }
         
         try {
           const versionId = imageSessionStore.addVersion(conversationId, {
@@ -133,6 +158,10 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
             status: content.status === 'completed' ? 'completed' : 'generating',
             isSelected: false
           });
+          
+          // ✅ Canvas ID 처리 완료 표시 - 중복 방지
+          imageSessionStore.markCanvasIdAsProcessed(conversationId, canvas.id);
+          canvasStore.markCanvasAsProcessed(conversationId, canvas.id);
           
           console.log(`✅ Canvas → ImageSession 버전 추가: ${index + 1}/${sortedCanvasItems.length}`, {
             canvasId: canvas.id.substring(0, 20),
@@ -155,18 +184,21 @@ const ImageVersionGallery: React.FC<ImageVersionGalleryProps> = ({
       }
       
       console.log('✅ ImageVersionGallery - Canvas 기반 다중 버전 ImageSession 생성 완료');
-      
-      // 🏁 새 세션 생성 완료 후 동기화 완료 플래그 설정
-      imageSessionStore.markSyncCompleted(conversationId);
     } else {
       console.log('✅ ImageVersionGallery - 데이터 일관성 확인됨, 추가 작업 불필요');
     }
+    
+    // 🏁 동기화 작업 완료 - 플래그 정리 (성공/실패 무관)
+    canvasStore.setSyncInProgress(conversationId, false);
+    
+    // 🎯 동기화 완료 플래그를 useEffect 끝에서 한 번만 설정 (통일화)
+    imageSessionStore.markSyncCompleted(conversationId);
+    
+    console.log('🏁 ImageVersionGallery - 동기화 작업 완료 및 플래그 정리:', conversationId);
   }, [
     conversationId, 
-    session, 
-    canvasStore.items, 
-    imageSessionStore,
-    imageSessionStore.isSyncCompleted(conversationId) // 플래그 상태 변경 시 즉시 반응
+    session?.versions?.length, // session 객체 대신 특정 프로퍼티만 추적
+    canvasStore.items.length    // items 배열 대신 길이만 추적하여 성능 최적화
   ]);
   
   const versions = propVersions || session?.versions || [];

@@ -5,6 +5,24 @@
 
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
+
+// UUID 충돌 방지 헬퍼 함수 (v4.5 추가)
+function generateUniqueVersionId(existingVersions: ImageVersion[]): string {
+  const existingIds = new Set(existingVersions.map(v => v.id));
+  let attempts = 0;
+  let newId: string;
+  
+  do {
+    newId = uuidv4();
+    attempts++;
+    if (attempts > 10) {
+      console.warn('⚠️ UUID 충돌 방지 - 10회 시도 후 강제 진행:', newId);
+      break;
+    }
+  } while (existingIds.has(newId));
+  
+  return newId;
+}
 // import { promptEvolutionEngine } from '../services/promptEvolutionEngine';
 import type { ImageVersion, ImageGenerationSession } from '../types/imageSession';
 import { ImageSessionApiClient, ApiResponseConverter } from '../services/imageSessionApi';
@@ -25,6 +43,9 @@ interface ImageSessionState {
   
   // 현재 사용자 ID (임시로 하드코딩, 추후 인증 시스템과 연동)
   currentUserId: string;
+  
+  // Canvas ID 기반 중복 방지 (v4.1) - conversationId -> Set<canvasId>
+  processedCanvasIds: Map<string, Set<string>>;
   
   // 세션 관리
   createSession: (conversationId: string, theme: string, initialPrompt: string) => ImageGenerationSession;
@@ -85,6 +106,11 @@ interface ImageSessionState {
   addVersionHybrid: (conversationId: string, version: Omit<ImageVersion, 'id' | 'createdAt' | 'versionNumber'>) => Promise<string>;
   deleteVersionHybrid: (conversationId: string, versionId: string) => Promise<void>;
   selectVersionHybrid: (conversationId: string, versionId: string) => Promise<void>;
+  
+  // Canvas ID 중복 방지 메서드 (v4.1)
+  isCanvasIdProcessed: (conversationId: string, canvasId: string) => boolean;
+  markCanvasIdAsProcessed: (conversationId: string, canvasId: string) => void;
+  clearProcessedCanvasIds: (conversationId: string) => void;
 }
 
 export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
@@ -94,6 +120,7 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
   loadError: null,
   syncCompletedFlags: new Map(),
   currentUserId: 'ff8e410a-53a4-4541-a7d4-ce265678d66a', // Mock 사용자 ID (실제 UUID 형식)
+  processedCanvasIds: new Map(), // Canvas ID 중복 방지 (v4.1)
   
   // === 세션 관리 ===
   createSession: (conversationId, theme, initialPrompt) => {
@@ -185,7 +212,10 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
     // 새 버전 추가 시 동기화 플래그 초기화 (새로운 동기화가 필요할 수 있음)
     get().clearSyncFlag(conversationId);
     
-    const versionId = uuidv4();
+    // 🛡️ UUID 충돌 방지 - 기존 버전 ID와 중복되지 않도록 보장 (v4.5)
+    const currentSession = get().getSession(conversationId);
+    const existingVersions = currentSession?.versions || [];
+    const versionId = generateUniqueVersionId(existingVersions);
     const nextVersionNumber = get().getNextVersionNumber(conversationId);
     
     const newVersion: ImageVersion = {
@@ -905,5 +935,31 @@ export const useImageSessionStore = create<ImageSessionState>((set, get) => ({
         }
       }
     }
+  },
+
+  // === Canvas ID 중복 방지 시스템 (v4.1) ===
+  isCanvasIdProcessed: (conversationId, canvasId) => {
+    const processedSet = get().processedCanvasIds.get(conversationId);
+    return processedSet ? processedSet.has(canvasId) : false;
+  },
+
+  markCanvasIdAsProcessed: (conversationId, canvasId) => {
+    const state = get();
+    const currentSet = state.processedCanvasIds.get(conversationId) || new Set<string>();
+    currentSet.add(canvasId);
+    
+    const newProcessedCanvasIds = new Map(state.processedCanvasIds);
+    newProcessedCanvasIds.set(conversationId, currentSet);
+    
+    set({ processedCanvasIds: newProcessedCanvasIds });
+    console.log(`✅ ImageSession Store - Canvas ID 처리 완료 표시: ${conversationId} / ${canvasId}`);
+  },
+
+  clearProcessedCanvasIds: (conversationId) => {
+    const newProcessedCanvasIds = new Map(get().processedCanvasIds);
+    newProcessedCanvasIds.delete(conversationId);
+    
+    set({ processedCanvasIds: newProcessedCanvasIds });
+    console.log(`🗑️ ImageSession Store - 처리된 Canvas ID 초기화: ${conversationId}`);
   },
 }));

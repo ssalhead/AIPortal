@@ -145,23 +145,33 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       console.log('✅ Canvas 활성화 완료 (중복 방지) - Canvas ID:', canvasId);
       
       // 🎨 ImageSession 버전 선택 동기화 (이미지 타입인 경우)
-      if (inferredType === 'image' && canvasData.image_data) {
+      if (inferredType === 'image' && (canvasData.image_data || canvasData.imageUrl || canvasData.images)) {
         const imageSessionStore = useImageSessionStore.getState();
         const session = imageSessionStore.getSession(conversationId);
         
         if (session) {
-          // 클릭한 메시지의 이미지 URL 추출
+          // 클릭한 메시지의 이미지 URL 추출 (호환성 강화)
           let targetImageUrl = null;
           const { image_data } = canvasData;
           
-          if (image_data.image_urls && image_data.image_urls.length > 0) {
+          // 새 표준 형식에서 추출
+          if (image_data?.image_urls && image_data.image_urls.length > 0) {
             targetImageUrl = image_data.image_urls[0];
-          } else if (image_data.images && image_data.images.length > 0) {
+          } else if (image_data?.images && image_data.images.length > 0) {
             const firstImage = image_data.images[0];
             targetImageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
-          } else if (image_data.generation_result?.images?.[0]) {
+          } else if (image_data?.generation_result?.images?.[0]) {
             const firstImage = image_data.generation_result.images[0];
             targetImageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+          }
+          // 구 형식 호환성
+          else if (canvasData.imageUrl) {
+            targetImageUrl = canvasData.imageUrl;
+          } else if (canvasData.images && canvasData.images.length > 0) {
+            const firstImage = canvasData.images[0];
+            targetImageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+          } else if (canvasData.image_urls && canvasData.image_urls.length > 0) {
+            targetImageUrl = canvasData.image_urls[0];
           }
           
           if (targetImageUrl) {
@@ -197,11 +207,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       return { isDisabled: true, reason: 'no_canvas_data' };
     }
     
-    // 이미지 Canvas 특별 처리 (기존 로직 유지)
+    // 이미지 Canvas 특별 처리 (호환성 강화)
     if (canvasData.type === 'image') {
       let imageUrl = null;
       const { image_data } = canvasData;
       
+      // 새 표준 형식에서 이미지 URL 추출
       if (image_data?.image_urls?.[0]) {
         imageUrl = image_data.image_urls[0];
       } else if (image_data?.images?.[0]) {
@@ -210,6 +221,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       } else if (image_data?.generation_result?.images?.[0]) {
         const firstImage = image_data.generation_result.images[0];
         imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+      }
+      // 구 형식 호환성: canvasData에 직접 있는 경우
+      else if (canvasData.imageUrl) {
+        imageUrl = canvasData.imageUrl;
+      } else if (canvasData.images?.[0]) {
+        const firstImage = canvasData.images[0];
+        imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+      } else if (canvasData.image_urls?.[0]) {
+        imageUrl = canvasData.image_urls[0];
       }
       
       if (imageUrl) {
@@ -221,16 +241,33 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       }
     }
     
-    // v4.0 Canvas 지속성 체크
-    // TODO: Canvas Store와 연동하여 실제 Canvas 존재 여부 확인
-    // 현재는 canvasData 존재 여부로 판단
-    const hasValidCanvasData = canvasData && (
-      (canvasData.type === 'image' && canvasData.image_data) ||
-      (canvasData.type === 'text' && canvasData.text_data) ||
-      (canvasData.type === 'mindmap' && canvasData.mindmap_data) ||
-      (canvasData.type === 'code' && canvasData.code_data) ||
-      (canvasData.type === 'chart' && canvasData.chart_data)
-    );
+    // v4.0 Canvas 지속성 체크 (호환성 강화)
+    const hasValidCanvasData = canvasData && (() => {
+      // 새 표준 형식 검사
+      if (canvasData.type === 'image' && canvasData.image_data) {
+        return true;
+      }
+      if (canvasData.type === 'text' && canvasData.text_data) {
+        return true;
+      }
+      if (canvasData.type === 'mindmap' && canvasData.mindmap_data) {
+        return true;
+      }
+      if (canvasData.type === 'code' && canvasData.code_data) {
+        return true;
+      }
+      if (canvasData.type === 'chart' && canvasData.chart_data) {
+        return true;
+      }
+      
+      // 구 형식 호환성 검사 (v3.x 이하)
+      if (canvasData.type === 'image') {
+        // 구 형식: imageUrl, images 등이 직접 canvasData에 있는 경우
+        return canvasData.imageUrl || canvasData.images || canvasData.image_urls;
+      }
+      
+      return false;
+    })();
     
     if (!hasValidCanvasData) {
       return { isDisabled: true, reason: 'invalid_canvas_data' };
@@ -267,7 +304,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
   
-  // Canvas 데이터 변경 감지 (v4.0 강화 버전)
+  // Canvas 데이터 변경 감지 (v4.0 강화 버전 - 상세 로깅)
   useEffect(() => {
     if (!isUser) {
       if (canvasData) {
@@ -276,8 +313,41 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           status: inlineLinkStatus.reason,
           isDisabled: inlineLinkStatus.isDisabled,
           hasMetadata: !!canvasData.metadata,
-          hasContinuity: !!canvasData.metadata?.continuity
+          hasContinuity: !!canvasData.metadata?.continuity,
+          // 구조 정보 추가
+          hasImageData: !!canvasData.image_data,
+          hasLegacyImageUrl: !!canvasData.imageUrl,
+          hasLegacyImages: !!canvasData.images,
+          structureFormat: canvasData.metadata?.structure_format || 'unknown'
         });
+        
+        // 이미지 데이터 상세 분석 (이미지 타입인 경우)
+        if (canvasData.type === 'image') {
+          const imageAnalysis = {
+            hasStandardImageData: !!canvasData.image_data,
+            hasLegacyFormat: !!canvasData.imageUrl || !!canvasData.images || !!canvasData.image_urls
+          };
+          
+          if (canvasData.image_data) {
+            imageAnalysis.standardFormat = {
+              hasImageUrls: !!canvasData.image_data.image_urls,
+              hasImages: !!canvasData.image_data.images,
+              hasGenerationResult: !!canvasData.image_data.generation_result,
+              imageUrlsCount: canvasData.image_data.image_urls?.length || 0,
+              imagesCount: canvasData.image_data.images?.length || 0
+            };
+          }
+          
+          if (canvasData.imageUrl || canvasData.images) {
+            imageAnalysis.legacyFormat = {
+              hasDirectImageUrl: !!canvasData.imageUrl,
+              hasDirectImages: !!canvasData.images,
+              directImagesCount: canvasData.images?.length || 0
+            };
+          }
+          
+          console.log(`🔍 Canvas 이미지 데이터 분석:`, imageAnalysis);
+        }
         
         // 연속성 정보 로깅
         if (canvasData.metadata?.continuity) {
@@ -288,7 +358,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           });
         }
         
-        console.log(`✅ 인라인 링크 버튼 상태: ${inlineLinkStatus.isDisabled ? '비활성' : '활성'}`);
+        console.log(`✅ 인라인 링크 버튼 상태: ${inlineLinkStatus.isDisabled ? '비활성' : '활성'} (이유: ${inlineLinkStatus.reason})`);
       } else {
         console.log(`❌ ChatMessage Canvas 데이터 없음 - 메시지 ID: ${messageId}, 인라인 버튼이 표시되지 않습니다.`);
       }

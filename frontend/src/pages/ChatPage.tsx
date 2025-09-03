@@ -23,8 +23,11 @@ import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
 import { CANVAS_SPLIT } from '../constants/layout';
 import type { SearchResult } from '../components/search/SearchResultsCard';
 import { CanvasWorkspace } from '../components/canvas/CanvasWorkspace';
+import { CollaborativeCanvasWorkspace } from '../components/canvas/CollaborativeCanvasWorkspace';
+import { SimpleImageWorkspace } from '../components/canvas/SimpleImageWorkspace';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useImageSessionStore } from '../stores/imageSessionStore';
+import { useSimpleImageHistoryStore } from '../stores/simpleImageHistoryStore';
 import { ConversationCanvasManager } from '../services/conversationCanvasManager';
 
 
@@ -62,7 +65,7 @@ export const ChatPage: React.FC = () => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const { isTyping, startTyping, stopTyping, currentModel } = useLoading();
   const queryClient = useQueryClient();
-  const { clearCanvas, getOrCreateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, loadCanvasForConversation, clearCanvasForNewConversation, activateSessionCanvas } = useCanvasStore();
+  const { clearCanvas, getOrCreateCanvas, hasActiveContent, isCanvasOpen, closeCanvas, shouldActivateForConversation, updateCanvasWithCompletedImage, loadCanvasForConversation, clearCanvasForNewConversation, activateSessionCanvas, items, activeItemId } = useCanvasStore();
   
   // 진화형 이미지 세션 Store
   const {
@@ -204,8 +207,6 @@ export const ChatPage: React.FC = () => {
       // Canvas Store 대화별 상태 관리 시작
       loadCanvasForConversation(conversationId);
       
-      // 현재 Canvas 상태 확인 (스마트 상태 관리를 위해)
-      const hadActiveCanvas = hasActiveContent();
       
       const conversation = await conversationHistoryService.getConversationDetail(conversationId);
       
@@ -1116,11 +1117,9 @@ export const ChatPage: React.FC = () => {
                 console.log('🔄 기존 currentSessionId:', currentSessionId);
                 console.log('🔄 기존 메시지 수:', messages.length);
                 
-                // Canvas Store 대화별 상태 관리 시작
+                // Canvas Store가 대화별 Canvas 상태를 자동으로 관리
+                // (Canvas 데이터가 있으면 활성화, 없으면 비활성화)
                 loadCanvasForConversation(conversationId);
-                
-                // 현재 Canvas 상태 확인 (스마트 상태 관리를 위해)
-                const hadActiveCanvas = hasActiveContent();
                 
                 // 선택된 대화의 메시지 로드
                 const conversation = await conversationHistoryService.getConversationDetail(conversationId);
@@ -1151,9 +1150,6 @@ export const ChatPage: React.FC = () => {
                 setMessages(formattedMessages);
                 setCurrentSessionId(conversationId);
                 console.log('🔄 대화 로딩 완료 - 새 sessionId:', conversationId);
-                
-                // 🎨 스마트 Canvas 상태 관리 (히스토리 클릭)
-                const shouldActivateCanvas = shouldActivateForConversation(formattedMessages);
                 
                 console.log('🎨 Canvas 상태 결정 (히스토리):', {
                   hadActiveCanvas,
@@ -1279,7 +1275,20 @@ export const ChatPage: React.FC = () => {
                 } else if (hadActiveCanvas) {
                   // Canvas 데이터가 없고 이전에 활성화되어 있었으면 닫기
                   console.log('🎨 Canvas 자동 비활성화 (히스토리) - 데이터 없음');
+                  console.log('🎨 Canvas 비활성화 상세:', {
+                    hadActiveCanvas,
+                    shouldActivateCanvas,
+                    messagesWithCanvas: formattedMessages.filter(msg => msg.canvasData).length,
+                    conversationId
+                  });
                   closeCanvas();
+                  console.log('✅ Canvas 비활성화 완료');
+                } else {
+                  console.log('🎨 Canvas 상태 유지:', {
+                    hadActiveCanvas,
+                    shouldActivateCanvas,
+                    action: 'no_change'
+                  });
                 }
                 // 둘 다 아니면 현재 상태 유지
                 
@@ -1467,7 +1476,34 @@ export const ChatPage: React.FC = () => {
               className="flex flex-col bg-gray-100 dark:bg-gray-800 min-w-0 border-l border-gray-200 dark:border-gray-700"
               style={{ width: `${100 - chatWidth}%` }}
             >
-              <CanvasWorkspace conversationId={currentSessionId} />
+              {(() => {
+                // 🎨 활성화된 Canvas 아이템의 타입 확인하여 적절한 워크스페이스 컴포넌트 렌더링
+                const activeItem = items.find(item => item.id === activeItemId);
+                const isImageCanvas = activeItem?.type === 'image';
+                
+                console.log('🎯 Canvas 워크스페이스 렌더링 결정:', {
+                  activeItemId,
+                  activeItemType: activeItem?.type,
+                  isImageCanvas,
+                  totalItems: items.length
+                });
+                
+                if (isImageCanvas) {
+                  // 🖼️ 이미지 Canvas: 단순화된 이미지 워크스페이스 사용
+                  console.log('🎨 SimpleImageWorkspace 렌더링 - 단순화된 이미지 히스토리 관리');
+                  return (
+                    <SimpleImageWorkspace 
+                      conversationId={currentSessionId || ''} 
+                    />
+                  );
+                } else {
+                  // 📝 기타 Canvas: 기존 v4.0 워크스페이스 사용
+                  console.log('🎨 CanvasWorkspace 렌더링 - 기본 워크스페이스 사용');
+                  return (
+                    <CanvasWorkspace conversationId={currentSessionId} />
+                  );
+                }
+              })()}
             </div>
           </>
         ) : (
@@ -1528,7 +1564,7 @@ export const ChatPage: React.FC = () => {
             )}
             
             {/* 채팅 메시지 영역 */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto" data-chat-messages>
               <div className="h-full">
                 {messages.length === 0 ? (
                   <WelcomeScreen onFeatureSelect={handleFeatureSelect} />
@@ -1610,7 +1646,23 @@ export const ChatPage: React.FC = () => {
       {/* 모바일 Canvas 모달 */}
       {hasActiveContent() && isMobile && isCanvasOpen && (
         <div className="fixed inset-0 z-50 bg-white dark:bg-slate-900">
-          <CanvasWorkspace conversationId={currentSessionId} />
+          {(() => {
+            // 🎨 모바일 Canvas도 동일한 타입 기반 렌더링 로직 적용
+            const activeItem = items.find(item => item.id === activeItemId);
+            const isImageCanvas = activeItem?.type === 'image';
+            
+            if (isImageCanvas) {
+              return (
+                <SimpleImageWorkspace 
+                  conversationId={currentSessionId || ''} 
+                />
+              );
+            } else {
+              return (
+                <CanvasWorkspace conversationId={currentSessionId} />
+              );
+            }
+          })()}
         </div>
       )}
 

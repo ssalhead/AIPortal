@@ -163,22 +163,28 @@ export class ConversationCanvasManager {
   }
 
   /**
-   * Canvas 데이터에서 적절한 타입 추론
+   * Canvas 데이터에서 적절한 타입 추론 (호환성 강화)
    */
   static inferCanvasType(canvasData: any): CanvasToolType {
     if (canvasData.type) {
       return canvasData.type as CanvasToolType;
     }
     
-    // 데이터 구조로 타입 추론
-    if (canvasData.image_data || canvasData.prompt) {
+    // 데이터 구조로 타입 추론 (새 형식)
+    if (canvasData.image_data) {
       return 'image';
-    } else if (canvasData.elements || canvasData.nodes) {
+    } else if (canvasData.text_data) {
+      return 'text';
+    } else if (canvasData.mindmap_data || canvasData.elements || canvasData.nodes) {
       return 'mindmap';
-    } else if (canvasData.code || canvasData.language) {
+    } else if (canvasData.code_data || canvasData.code || canvasData.language) {
       return 'code';
-    } else if (canvasData.chartType || canvasData.data) {
+    } else if (canvasData.chart_data || canvasData.chartType || canvasData.data) {
       return 'chart';
+    }
+    // 구 형식 호환성
+    else if (canvasData.imageUrl || canvasData.images || canvasData.image_urls || canvasData.prompt) {
+      return 'image';
     } else {
       return 'text'; // 기본값
     }
@@ -194,9 +200,16 @@ export class ConversationCanvasManager {
     switch (type) {
       case 'image':
         const { image_data } = canvasData;
+        
+        // 이미지 URL 추출 로직 (호환성 강화)
+        let imageUrl = null;
+        let prompt = '';
+        let style = 'realistic';
+        let size = '1K_1:1';
+        let generation_result = null;
+        
+        // 새 표준 형식 처리
         if (image_data) {
-          // 이미지 URL 추출 로직 (기존과 동일)
-          let imageUrl = null;
           if (image_data.image_urls && image_data.image_urls.length > 0) {
             imageUrl = image_data.image_urls[0];
           } else if (image_data.images && image_data.images.length > 0) {
@@ -206,22 +219,41 @@ export class ConversationCanvasManager {
             const firstImage = image_data.generation_result.images[0];
             imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
           }
-
-          return {
-            type: 'image',
-            content: {
-              ...baseContent,
-              prompt: image_data.prompt || canvasData.title || '',
-              negativePrompt: image_data.negativePrompt || '',
-              style: image_data.style || 'realistic',
-              size: image_data.size || '1K_1:1',
-              status: imageUrl ? 'completed' : 'generating',
-              imageUrl: imageUrl || '',
-              generation_result: image_data.generation_result
-            }
-          };
+          
+          prompt = image_data.prompt || '';
+          style = image_data.style || 'realistic';
+          size = image_data.size || '1K_1:1';
+          generation_result = image_data.generation_result;
         }
-        break;
+        // 구 형식 호환성 처리
+        else {
+          if (canvasData.imageUrl) {
+            imageUrl = canvasData.imageUrl;
+          } else if (canvasData.images && canvasData.images.length > 0) {
+            const firstImage = canvasData.images[0];
+            imageUrl = typeof firstImage === 'string' ? firstImage : firstImage?.url;
+          } else if (canvasData.image_urls && canvasData.image_urls.length > 0) {
+            imageUrl = canvasData.image_urls[0];
+          }
+          
+          prompt = canvasData.prompt || canvasData.title || '';
+          style = canvasData.style || 'realistic';
+          size = canvasData.size || '1K_1:1';
+        }
+
+        return {
+          type: 'image',
+          content: {
+            ...baseContent,
+            prompt: prompt,
+            negativePrompt: image_data?.negativePrompt || '',
+            style: style,
+            size: size,
+            status: imageUrl ? 'completed' : 'generating',
+            imageUrl: imageUrl || '',
+            generation_result: generation_result
+          }
+        };
         
       case 'mindmap':
         return {

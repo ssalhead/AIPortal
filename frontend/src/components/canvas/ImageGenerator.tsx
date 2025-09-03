@@ -143,6 +143,33 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = (props) => {
     });
   }
   
+  // 🔄 conversationId 변경 감지 및 컴포넌트 재초기화
+  useEffect(() => {
+    if (!conversationId) return;
+    
+    console.log('🔄 ImageGenerator - conversationId 변경 감지:', {
+      newConversationId: conversationId,
+      sessionExists: hasSession(conversationId),
+      isCanvas
+    });
+    
+    // Canvas 모드에서 conversationId가 변경되면 상태 리셋
+    if (isCanvas) {
+      // 프롬프트와 설정값들 초기화 (현재 활성화된 Canvas의 설정값으로 초기화)
+      const currentItem = props.item;
+      setPrompt(currentItem.content.prompt || '');
+      setNegativePrompt(currentItem.content.negativePrompt || '');
+      setSelectedStyle(currentItem.content.style || 'realistic');
+      setSelectedSize(currentItem.content.size || '1K_1:1');
+      
+      console.log('✅ ImageGenerator - Canvas 모드 상태 리셋 완료:', {
+        prompt: currentItem.content.prompt || '',
+        style: currentItem.content.style || 'realistic',
+        size: currentItem.content.size || '1K_1:1'
+      });
+    }
+  }, [conversationId, hasSession, isCanvas]);
+  
   // 작업 상태 폴링
   const pollJobStatus = async (jobId: string): Promise<void> => {
     const maxAttempts = 30; // 최대 30번 시도 (약 3분)

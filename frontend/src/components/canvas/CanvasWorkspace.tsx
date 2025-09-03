@@ -22,7 +22,10 @@ import {
   Minimize2,
   Clock,
   Link2,
-  Zap
+  Zap,
+  Package,
+  Share,
+  Sparkles
 } from 'lucide-react';
 import { useCanvasStore } from '../../stores/canvasStore';
 import type { CanvasToolType } from '../../types/canvas';
@@ -31,8 +34,11 @@ import { ImageGenerator } from './ImageGenerator';
 import { MindMapEditor } from './MindMapEditor';
 import CanvasHistoryPanel from './CanvasHistoryPanel';
 import CanvasReferenceIndicator from './CanvasReferenceIndicator';
+import { CanvasExportDialog } from './CanvasExportDialog';
+import CanvasShareModal from './CanvasShareModal';
 import { CanvasShareStrategy } from '../../services/CanvasShareStrategy';
 import { CanvasAutoSave } from '../../services/CanvasAutoSave';
+import { AILayoutPanel } from './AILayoutPanel';
 
 const TOOL_ICONS: Record<CanvasToolType, React.ReactNode> = {
   text: <FileText className="w-4 h-4" />,
@@ -56,6 +62,9 @@ interface CanvasWorkspaceProps {
 
 export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId }) => {
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isAILayoutPanelOpen, setIsAILayoutPanelOpen] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<{
     isDirty: boolean;
     lastSaveTime: number;
@@ -184,6 +193,50 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
             </button>
           )}
 
+          {/* Canvas 내보내기 버튼 */}
+          {activeItem && (
+            <button
+              onClick={() => setIsExportDialogOpen(true)}
+              className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              title="Canvas 내보내기"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Canvas 공유 버튼 */}
+          {activeItem && (
+            <button
+              onClick={() => setIsShareModalOpen(true)}
+              className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              title="Canvas 공유"
+            >
+              <Share className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* AI 레이아웃 버튼 */}
+          {activeItem && (
+            <button
+              onClick={() => setIsAILayoutPanelOpen(true)}
+              className="p-1.5 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/20 rounded-lg transition-colors"
+              title="AI 레이아웃 도구"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* 시리즈 일괄 내보내기 버튼 (대화에 여러 Canvas가 있는 경우) */}
+          {conversationId && items.length > 1 && (
+            <button
+              onClick={() => setIsExportDialogOpen(true)}
+              className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              title="시리즈 일괄 내보내기"
+            >
+              <Package className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
             className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
@@ -237,7 +290,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
                       notifyCanvasChange(activeItem.id, { ...activeItem.content, ...updates });
                     }
                   }}
-                  conversationId={conversationId}
+                  conversationId={activeItem.content.conversationId || conversationId}
                 />
               )}
               {activeItem.type === 'mindmap' && (
@@ -279,6 +332,48 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({ conversationId
           onClose={() => setIsHistoryPanelOpen(false)}
         />
       )}
+
+      {/* Canvas 내보내기 다이얼로그 */}
+      {activeItem && (
+        <CanvasExportDialog
+          isOpen={isExportDialogOpen}
+          onClose={() => setIsExportDialogOpen(false)}
+          canvasId={activeItem.id}
+          canvasName={
+            activeItem.type === 'text' ? activeItem.content.title :
+            activeItem.type === 'image' ? '이미지 생성' :
+            activeItem.type === 'mindmap' ? '마인드맵' :
+            'Canvas'
+          }
+          conversationId={conversationId}
+          isSeriesMode={conversationId && items.length > 1}
+          canvasIds={items.map(item => item.id)}
+        />
+      )}
+
+      {/* Canvas 공유 모달 */}
+      {activeItem && (
+        <CanvasShareModal
+          canvasId={activeItem.id}
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+        />
+      )}
+
+      {/* AI 레이아웃 패널 */}
+      <AILayoutPanel
+        isOpen={isAILayoutPanelOpen}
+        onClose={() => setIsAILayoutPanelOpen(false)}
+        canvasData={activeItem ? {
+          id: activeItem.id,
+          stage: { width: 1920, height: 1080 }, // 기본값, 실제로는 Canvas 데이터에서 가져와야 함
+          elements: [activeItem] // 실제로는 Canvas의 모든 요소
+        } : undefined}
+        onCanvasUpdate={(newCanvasData) => {
+          // Canvas 업데이트 처리
+          console.log('Canvas updated:', newCanvasData);
+        }}
+      />
     </div>
   );
 };

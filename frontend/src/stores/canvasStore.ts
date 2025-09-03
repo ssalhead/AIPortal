@@ -12,6 +12,24 @@ import { CanvasShareStrategy } from '../services/CanvasShareStrategy';
 import { CanvasContinuity } from '../services/CanvasContinuity';
 import { CanvasAutoSave } from '../services/CanvasAutoSave';
 
+// UUID 충돌 방지 헬퍼 함수 (v4.5 추가)
+function generateUniqueCanvasId(existingItems: CanvasItem[]): string {
+  const existingIds = new Set(existingItems.map(item => item.id));
+  let attempts = 0;
+  let newId: string;
+  
+  do {
+    newId = uuidv4();
+    attempts++;
+    if (attempts > 10) {
+      console.warn('⚠️ Canvas UUID 충돌 방지 - 10회 시도 후 강제 진행:', newId);
+      break;
+    }
+  } while (existingIds.has(newId));
+  
+  return newId;
+}
+
 // 백엔드 크기 포맷 → 프론트엔드 SIZE_OPTIONS 포맷 변환
 function convertBackendSizeToFrontend(backendSize: string): string {
   const sizeMap: Record<string, string> = {
@@ -53,6 +71,13 @@ interface CanvasState {
   syncQueue: SyncTask[];
   isProcessingSyncQueue: boolean;
   
+  // 🚫 중복 실행 방지 시스템
+  syncInProgress: Record<string, boolean>; // conversationId별 동기화 진행 상태
+  processedCanvasItems: Record<string, Set<string>>; // conversationId별 처리된 Canvas 아이템 ID들
+  
+  // ⏱️ API 디바운싱 시스템 (v4.5 추가)
+  debounceTimers: Record<string, NodeJS.Timeout>; // conversationId별 디바운싱 타이머
+  
   // 🎯 v4.0 핵심 통합 메서드 - 영구 보존 및 공유 전략 적용
   getOrCreateCanvasV4: (conversationId: string, type: CanvasToolType, canvasData?: any, requestId?: string) => Promise<string>;
   getOrCreateCanvas: (conversationId: string, type: CanvasToolType, canvasData?: any) => Promise<string>; // 하위 호환
@@ -87,6 +112,32 @@ interface CanvasState {
   // 🔄 v4.0 자동 저장 시스템
   enableAutoSave: (canvasId: string, canvasType: CanvasToolType) => void;
   disableAutoSave: (canvasId: string) => void;
+  
+  // 🎨 Request-based Canvas Evolution System (Phase 4.2)
+  evolveCanvasImage: (conversationId: string, canvasId: string, referenceImageId: string, newPrompt: string, evolutionParams?: {
+    evolutionType?: string;
+    editMode?: string;
+    style?: string;
+    size?: string;
+  }) => Promise<{ success: boolean; data?: any; error?: string }>;
+  
+  // 🔄 Backend Workflow Integration
+  dispatchImageRequest: (request: {
+    conversationId: string;
+    userId: string;
+    prompt: string;
+    source: 'chat' | 'canvas' | 'api';
+    canvasId?: string;
+    referenceImageId?: string;
+    evolutionType?: string;
+    editMode?: string;
+    style?: string;
+    size?: string;
+  }) => Promise<{ success: boolean; data?: any; error?: string; workflowMode?: string }>;
+  
+  // 🎯 Canvas-Backend Synchronization
+  syncCanvasWithBackend: (canvasId: string) => Promise<void>;
+  loadCanvasHistory: (conversationId: string, canvasId: string) => Promise<any[]>;
   notifyCanvasChange: (canvasId: string, canvasData: any) => void;
   
   // Helper methods
@@ -113,6 +164,17 @@ interface CanvasState {
   
   // Canvas → ImageSession 역방향 동기화 (v4.1 새 기능)
   syncCanvasToImageSession: (conversationId: string, canvasItems?: CanvasItem[]) => Promise<{ action: string; versionsAdded: number; }>;
+  
+  // 🚫 중복 실행 방지 메서드들
+  isSyncInProgress: (conversationId: string) => boolean;
+  setSyncInProgress: (conversationId: string, inProgress: boolean) => void;
+  isCanvasProcessed: (conversationId: string, canvasId: string) => boolean;
+  markCanvasAsProcessed: (conversationId: string, canvasId: string) => void;
+  clearProcessedCanvasItems: (conversationId: string) => void;
+  
+  // ⏱️ API 디바운싱 메서드들 (v4.5)
+  debouncedSyncCanvasToImageSession: (conversationId: string, canvasItems?: CanvasItem[], delayMs?: number) => Promise<{ action: string; versionsAdded: number; }>;
+  clearDebounceTimer: (conversationId: string) => void;
   
   exportCanvas: () => string;
   importCanvas: (data: string) => void;
@@ -147,6 +209,13 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
   // 🚀 순차 동기화 시스템 초기 상태 (기존 유지)
   syncQueue: [],
   isProcessingSyncQueue: false,
+  
+  // 🚫 중복 실행 방지 시스템 초기 상태
+  syncInProgress: {},
+  processedCanvasItems: {},
+  
+  // ⏱️ API 디바운싱 시스템 초기 상태 (v4.5)
+  debounceTimers: {},
   
   // 🎯 v4.0 핵심 통합 메서드 - 영구 보존 및 공유 전략 적용
   getOrCreateCanvasV4: async (conversationId, type, canvasData, requestId) => {
@@ -586,8 +655,12 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
   addItem: (type, content) => {
     console.log('⚠️ Canvas Store - addItem 호출됨 (deprecated, getOrCreateCanvas 사용 권장)');
     
+    // 🛡️ UUID 충돌 방지 - 기존 Canvas 아이템 ID와 중복되지 않도록 보장 (v4.5)
+    const existingItems = get().items;
+    const safeId = generateUniqueCanvasId(existingItems);
+    
     const newItem: CanvasItem = {
-      id: uuidv4(),
+      id: safeId,
       type,
       content,
       position: { x: 50, y: 50 },
@@ -1425,11 +1498,34 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     if (conversationCanvases.length > 0) {
       // 해당 대화의 Canvas가 있으면 첫 번째 것을 활성화
       console.log('🎨 Canvas Store - 기존 대화 Canvas 복원:', conversationCanvases[0].id);
-      set({
-        activeItemId: conversationCanvases[0].id,
-        isCanvasOpen: true,
-        lastConversationId: conversationId
-      });
+      
+      // ✅ Canvas Item의 conversationId 정확성 검증 및 보정
+      const targetCanvas = conversationCanvases[0];
+      if (targetCanvas.content.conversationId !== conversationId) {
+        console.log('🔧 Canvas Store - Canvas conversationId 불일치 감지 및 보정:', {
+          canvasId: targetCanvas.id,
+          currentConversationId: targetCanvas.content.conversationId,
+          expectedConversationId: conversationId
+        });
+        
+        // Canvas Item의 conversationId 보정
+        set(state => ({
+          items: state.items.map(item => 
+            item.id === targetCanvas.id 
+              ? { ...item, content: { ...item.content, conversationId } }
+              : item
+          ),
+          activeItemId: targetCanvas.id,
+          isCanvasOpen: true,
+          lastConversationId: conversationId
+        }));
+      } else {
+        set({
+          activeItemId: conversationCanvases[0].id,
+          isCanvasOpen: true,
+          lastConversationId: conversationId
+        });
+      }
     } else {
       // 해당 대화의 Canvas가 없으면 Canvas 닫기
       console.log('📪 Canvas Store - 새 대화에 Canvas 없음, Canvas 닫기');
@@ -1558,9 +1654,26 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     }
     
     try {
-      // 🎯 중복 감지: Canvas 데이터 기반 고유 식별자 생성 (개선된 해시)
-      const uniqueId = `${image_data.prompt.trim()}_${image_data.style || 'realistic'}_${image_data.size || '1K_1:1'}`;
-      console.log('🔍 Canvas Store - 고유 식별자 생성:', uniqueId);
+      // 🎯 강화된 중복 감지: SHA-256 기반 컨텐츠 해시 + 타임스탬프 윈도우
+      const contentData = {
+        prompt: image_data.prompt.trim(),
+        style: image_data.style || 'realistic',
+        size: image_data.size || '1K_1:1',
+        aspectRatio: image_data.aspect_ratio || '1:1'
+      };
+      
+      // SHA-256 해시 생성 (강력한 중복 감지)
+      const contentString = JSON.stringify(contentData);
+      const encoder = new TextEncoder();
+      const data = encoder.encode(contentString);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      
+      console.log('🔐 Canvas Store - 강화된 컨텐츠 해시 생성:', {
+        contentData,
+        hash: contentHash.substring(0, 16) + '...'
+      });
       
       // 이미지 URL 추출 (중복 확인용) - 개선된 URL 추출 로직
       let imageUrl = '';
@@ -1612,44 +1725,43 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
         });
         
         const existingVersion = session.versions.find(version => {
-          const versionUniqueId = `${version.prompt.trim()}_${version.style}_${version.size}`;
-          
-          // URL 매칭 (더 엄격한 조건)
-          const hasValidUrl = imageUrl && imageUrl.length > 20 && version.imageUrl && version.imageUrl.length > 20;
-          const urlMatch = hasValidUrl && version.imageUrl === imageUrl;
-          
-          // 프롬프트 매칭 (공백 제거 후 비교)
-          const promptMatch = version.prompt.trim() === image_data.prompt.trim();
-          
-          // 전체 컨텐츠 매칭 (스타일 + 크기 포함)
-          const contentMatch = versionUniqueId === uniqueId;
-          
-          // 🎯 강화된 중복 판정 로직
-          let isRealDuplicate = false;
-          
-          if (urlMatch && promptMatch) {
-            // 최고 신뢰도: URL과 프롬프트 모두 정확히 일치
-            isRealDuplicate = true;
-          } else if (contentMatch && hasValidUrl && urlMatch) {
-            // 높은 신뢰도: 전체 컨텐츠와 URL 모두 일치
-            isRealDuplicate = true;
-          } else if (promptMatch && version.style === (image_data.style || 'realistic') && version.size === (image_data.size || '1K_1:1')) {
-            // 중간 신뢰도: 프롬프트, 스타일, 크기 모두 일치
-            isRealDuplicate = true;
+          // 🔐 1단계: 컨텐츠 해시 기반 정확한 중복 감지 (최고 신뢰도)
+          if (version.metadata?.contentHash === contentHash) {
+            console.log('🔐 Canvas Store - 해시 기반 정확한 중복 감지:', {
+              versionId: version.id.substring(0, 8),
+              hash: contentHash.substring(0, 16) + '...'
+            });
+            return true;
           }
           
-          console.log('🔍 Canvas Store - 중복 검사 세부:', {
-            versionId: version.id.substring(0, 8),
-            versionPrompt: version.prompt.substring(0, 30),
-            currentPrompt: image_data.prompt.substring(0, 30),
-            promptMatch,
-            contentMatch,
-            urlMatch,
-            hasValidUrl,
-            isRealDuplicate
-          });
+          // 🔗 2단계: URL 매칭 (높은 신뢰도)
+          const hasValidUrl = imageUrl && imageUrl.length > 20 && version.imageUrl && version.imageUrl.length > 20;
+          if (hasValidUrl && version.imageUrl === imageUrl) {
+            console.log('🔗 Canvas Store - URL 기반 중복 감지:', {
+              versionId: version.id.substring(0, 8),
+              url: imageUrl.substring(-30)
+            });
+            return true;
+          }
           
-          return isRealDuplicate;
+          // ⏰ 3단계: 시간 기반 중복 방지 (Race Condition 해결)
+          if (version.createdAt) {
+            const versionTime = new Date(version.createdAt).getTime();
+            const currentTime = Date.now();
+            const timeDiff = currentTime - versionTime;
+            
+            // 10초 이내 생성 + 동일한 프롬프트면 중복으로 간주 (더 엄격한 기준)
+            if (timeDiff < 10000 && version.prompt.trim() === image_data.prompt.trim()) {
+              console.log('⏰ Canvas Store - 시간 기반 중복 감지 (Race Condition 방지):', {
+                versionId: version.id.substring(0, 8),
+                timeDiff: `${timeDiff}ms`,
+                thresholdMs: 10000
+              });
+              return true;
+            }
+          }
+          
+          return false;
         });
         
         if (existingVersion) {
@@ -1689,6 +1801,13 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
           size: image_data.size || '1K_1:1',
           imageUrl: imageUrl,
           status: image_data.status === 'completed' ? 'completed' : 'generating',
+          metadata: {
+            source: 'canvas_integration',
+            canvasSync: true,
+            contentHash: contentHash,     // 🔐 컨텐츠 해시 저장으로 정확한 중복 감지
+            contentData: contentData,     // 📊 원본 컨텐츠 데이터 보존
+            deduplicationVersion: '5.0'   // 🏷️ 중복 감지 버전 태그
+          },
           isSelected: true
         });
         
@@ -1710,6 +1829,13 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
             size: image_data.size || '1K_1:1',
             imageUrl: imageUrl,
             status: image_data.status === 'completed' ? 'completed' : 'generating',
+            metadata: {
+              source: 'canvas_integration_fallback',
+              canvasSync: false,
+              contentHash: contentHash,     // 🔐 fallback에서도 해시 저장
+              contentData: contentData,     // 📊 원본 데이터 보존
+              deduplicationVersion: '5.0'   // 🏷️ 중복 감지 버전 태그
+            },
             isSelected: true
           });
           
@@ -1750,15 +1876,6 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     } catch (error) {
       console.error('❌ Canvas Store - 자동 저장 상태 조회 실패:', error);
       return null;
-    }
-  },
-
-  // v4.0 Canvas 변경 알림
-  notifyCanvasChange: (canvasId: string, canvasData: any) => {
-    try {
-      CanvasAutoSave.notifyChange(canvasId, canvasData);
-    } catch (error) {
-      console.error('❌ Canvas Store - Canvas 변경 알림 실패:', error);
     }
   },
   
@@ -1903,6 +2020,112 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
     }
   },
 
+  // 🚫 중복 실행 방지 시스템 (v4.1)
+  isSyncInProgress: (conversationId) => {
+    return get().syncInProgress[conversationId] || false;
+  },
+
+  setSyncInProgress: (conversationId, inProgress) => {
+    set(state => ({
+      syncInProgress: {
+        ...state.syncInProgress,
+        [conversationId]: inProgress
+      }
+    }));
+    console.log(`🔄 Canvas Store - 동기화 상태 설정: ${conversationId} = ${inProgress}`);
+  },
+
+  isCanvasProcessed: (conversationId, canvasId) => {
+    const processedSet = get().processedCanvasItems[conversationId];
+    return processedSet ? processedSet.has(canvasId) : false;
+  },
+
+  markCanvasAsProcessed: (conversationId, canvasId) => {
+    set(state => {
+      const currentSet = state.processedCanvasItems[conversationId] || new Set<string>();
+      const newSet = new Set(currentSet);
+      newSet.add(canvasId);
+      
+      return {
+        processedCanvasItems: {
+          ...state.processedCanvasItems,
+          [conversationId]: newSet
+        }
+      };
+    });
+    console.log(`✅ Canvas Store - Canvas 처리 완료 표시: ${conversationId} / ${canvasId}`);
+  },
+
+  clearProcessedCanvasItems: (conversationId) => {
+    set(state => {
+      const { [conversationId]: removed, ...remaining } = state.processedCanvasItems;
+      return {
+        processedCanvasItems: remaining,
+        syncInProgress: {
+          ...state.syncInProgress,
+          [conversationId]: false
+        }
+      };
+    });
+    console.log(`🗑️ Canvas Store - 처리된 Canvas 아이템 초기화: ${conversationId}`);
+  },
+
+  // ⏱️ API 디바운싱 메서드들 (v4.5 추가)
+  debouncedSyncCanvasToImageSession: async (conversationId, canvasItems, delayMs = 200) => {
+    console.log(`⏱️ Canvas Store - 디바운싱 동기화 요청 (${delayMs}ms 지연):`, conversationId);
+    
+    // 기존 타이머 클리어
+    const currentTimer = get().debounceTimers[conversationId];
+    if (currentTimer) {
+      clearTimeout(currentTimer);
+      console.log(`⏹️ Canvas Store - 기존 타이머 취소:`, conversationId);
+    }
+    
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(async () => {
+        try {
+          console.log(`🚀 Canvas Store - 디바운싱 지연 완료, 실제 동기화 실행:`, conversationId);
+          const result = await get().syncCanvasToImageSession(conversationId, canvasItems);
+          
+          // 타이머 정리
+          set((state) => ({
+            debounceTimers: {
+              ...state.debounceTimers,
+              [conversationId]: undefined
+            }
+          }));
+          
+          resolve(result);
+        } catch (error) {
+          console.error('❌ Canvas Store - 디바운싱 동기화 실패:', error);
+          reject(error);
+        }
+      }, delayMs);
+      
+      // 타이머 저장
+      set((state) => ({
+        debounceTimers: {
+          ...state.debounceTimers,
+          [conversationId]: timer
+        }
+      }));
+    });
+  },
+  
+  clearDebounceTimer: (conversationId) => {
+    const timer = get().debounceTimers[conversationId];
+    if (timer) {
+      clearTimeout(timer);
+      set((state) => ({
+        debounceTimers: {
+          ...state.debounceTimers,
+          [conversationId]: undefined
+        }
+      }));
+      console.log(`🗑️ Canvas Store - 디바운싱 타이머 클리어:`, conversationId);
+    }
+  },
+
 }), {
   name: 'canvas-store', // LocalStorage 키 이름
   storage: createJSONStorage(() => localStorage),
@@ -1924,6 +2147,176 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
       // Canvas 상태는 항상 닫힌 상태로 시작
       state.activeItemId = null;
       state.isCanvasOpen = false;
+    }
+  },
+  
+  // 🎨 Request-based Canvas Evolution System Implementation (Phase 4.2)
+  evolveCanvasImage: async (conversationId, canvasId, referenceImageId, newPrompt, evolutionParams = {}) => {
+    console.log('🎨 Canvas Store - 이미지 진화 시작:', {
+      conversationId,
+      canvasId,
+      referenceImageId,
+      newPrompt: newPrompt.slice(0, 30) + '...',
+      evolutionParams
+    });
+    
+    try {
+      // 사용자 정보 가져오기 (인증 상태에서)
+      // TODO: 실제 인증 시스템에서 userId 가져오기
+      const userId = 'temp-user-id'; // 임시값
+      
+      const request = {
+        conversationId,
+        userId,
+        prompt: newPrompt,
+        source: 'canvas' as const,
+        canvasId,
+        referenceImageId,
+        evolutionType: evolutionParams.evolutionType || 'variation',
+        editMode: 'EDIT_MODE_DEFAULT', // Context7 표준 마스크 프리 모드
+        style: evolutionParams.style,
+        size: evolutionParams.size
+      };
+      
+      const result = await get().dispatchImageRequest(request);
+      
+      if (result.success && result.data) {
+        // 성공 시 Canvas Store 및 ImageSession Store 동기화
+        await get().ensureImageSession(conversationId, result.data);
+        await get().syncCanvasWithBackend(canvasId);
+        
+        console.log('✅ Canvas 이미지 진화 완료:', {
+          newImageUrl: result.data.imageUrl,
+          canvasVersion: result.data.canvas_version
+        });
+      }
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Canvas 이미지 진화 실패:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '이미지 진화 중 오류가 발생했습니다'
+      };
+    }
+  },
+  
+  // 🔄 Backend Workflow Integration Implementation
+  dispatchImageRequest: async (request) => {
+    console.log('🔄 Canvas Store - 백엔드 워크플로우 디스패치:', {
+      source: request.source,
+      hasCanvasId: !!request.canvasId,
+      hasReferenceImageId: !!request.referenceImageId
+    });
+    
+    try {
+      // 백엔드 Canvas 워크플로우 디스패처 API 호출
+      const response = await fetch('/api/v1/canvas/dispatch-image-request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // TODO: Authorization 헤더 추가
+        },
+        body: JSON.stringify(request)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API 요청 실패: ${response.status} ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log('✅ Canvas Store - 백엔드 워크플로우 응답:', {
+        success: result.success,
+        workflowMode: result.workflow_mode,
+        hasData: !!result.data
+      });
+      
+      return {
+        success: result.success,
+        data: result.data,
+        error: result.error,
+        workflowMode: result.workflow_mode
+      };
+      
+    } catch (error) {
+      console.error('❌ Canvas Store - 백엔드 워크플로우 디스패치 실패:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '워크플로우 디스패치 중 오류가 발생했습니다'
+      };
+    }
+  },
+  
+  // 🎯 Canvas-Backend Synchronization Implementation
+  syncCanvasWithBackend: async (canvasId) => {
+    console.log('🎯 Canvas Store - 백엔드 동기화 시작:', canvasId);
+    
+    try {
+      const canvas = get().items.find(item => item.id === canvasId);
+      if (!canvas) {
+        console.warn('⚠️ 동기화할 Canvas를 찾을 수 없음:', canvasId);
+        return;
+      }
+      
+      const conversationId = (canvas.content as any)?.conversationId;
+      if (!conversationId) {
+        console.warn('⚠️ Canvas에 conversationId가 없음:', canvasId);
+        return;
+      }
+      
+      // 백엔드에서 최신 Canvas 히스토리 가져오기
+      const history = await get().loadCanvasHistory(conversationId, canvasId);
+      
+      if (history.length > 0) {
+        // Canvas Store와 ImageSession Store 동기화
+        await get().ensureImageSession(conversationId, {
+          image_data: {
+            images: history.map(h => h.image_url).filter(Boolean)
+          }
+        });
+        
+        console.log('✅ Canvas-백엔드 동기화 완료:', {
+          canvasId,
+          historyCount: history.length
+        });
+      }
+      
+    } catch (error) {
+      console.error('❌ Canvas-백엔드 동기화 실패:', error);
+    }
+  },
+  
+  loadCanvasHistory: async (conversationId, canvasId) => {
+    console.log('📚 Canvas Store - 히스토리 로드:', { conversationId, canvasId });
+    
+    try {
+      // 백엔드 Canvas 히스토리 API 호출
+      const response = await fetch(`/api/v1/canvas/history/${conversationId}/${canvasId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          // TODO: Authorization 헤더 추가
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`히스토리 로드 실패: ${response.status} ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log('✅ Canvas 히스토리 로드 완료:', {
+        historyCount: result.history?.length || 0,
+        hasAnalysis: !!result.analysis
+      });
+      
+      return result.history || [];
+      
+    } catch (error) {
+      console.error('❌ Canvas 히스토리 로드 실패:', error);
+      return [];
     }
   }
 }));
