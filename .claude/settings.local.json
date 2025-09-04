@@ -49,7 +49,9 @@
       "Bash(npm run:*)",
       "Bash(journalctl:*)",
       "Bash(npx tsc:*)",
-      "WebFetch(domain:developers.google.com)"
+      "WebFetch(domain:developers.google.com)",
+      "mcp__playwright__playwright_screenshot",
+      "mcp__playwright__playwright_click"
     ],
     "deny": [],
     "additionalDirectories": [

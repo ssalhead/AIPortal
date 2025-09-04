@@ -1151,6 +1151,10 @@ export const ChatPage: React.FC = () => {
                 setCurrentSessionId(conversationId);
                 console.log('🔄 대화 로딩 완료 - 새 sessionId:', conversationId);
                 
+                // Canvas 상태 결정
+                const hadActiveCanvas = Boolean(activeItemId);
+                const shouldActivateCanvas = formattedMessages.some(msg => msg.canvasData);
+                
                 console.log('🎨 Canvas 상태 결정 (히스토리):', {
                   hadActiveCanvas,
                   shouldActivateCanvas,

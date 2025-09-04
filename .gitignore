@@ -70,3 +70,4 @@ Thumbs.db
 
 # Claude
 .claude/cache/gh_2.40.1_linux_amd64*
+gcp_service_account/

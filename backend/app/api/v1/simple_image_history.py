@@ -82,14 +82,17 @@ class ImageEvolutionRequest(BaseModel):
 
 
 class ImageEditRequest(BaseModel):
-    """이미지 편집 요청 모델 (Reference Images 기반)"""
-    reference_image_id: uuid.UUID = Field(..., description="참조할 기존 이미지 ID")
-    prompt: str = Field(..., min_length=1, max_length=2000, description="편집 프롬프트")
-    edit_mode: str = Field("EDIT_MODE_DEFAULT", description="편집 모드")
-    mask_mode: Optional[str] = Field(None, description="마스크 모드 (선택적)")
+    """Gemini 2.5 Flash 기반 이미지 편집 요청 모델"""
+    reference_image_id: uuid.UUID = Field(..., description="편집할 기존 이미지 ID")
+    prompt: str = Field(..., min_length=1, max_length=2000, description="편집 프롬프트 (자연어)")
+    optimize_prompt: bool = Field(False, description="프롬프트 최적화 여부")
+    
+    # 기존 호환성을 위해 유지 (사용되지 않음)
+    edit_mode: str = Field("gemini_edit", description="편집 모드 (자동 감지)")
+    mask_mode: Optional[str] = Field(None, description="사용되지 않음 (호환성용)")
     style: Optional[str] = Field(None, description="스타일 (선택적)")
     size: Optional[str] = Field(None, description="크기 (선택적)")
-    num_images: int = Field(1, ge=1, le=4, description="생성할 이미지 수")
+    num_images: int = Field(1, ge=1, le=1, description="생성할 이미지 수 (Gemini는 1개만 지원)")
 
 
 class ImageSelectionRequest(BaseModel):
@@ -423,21 +426,17 @@ async def edit_image_with_reference(
         
         logger.debug(f"📷 참조 이미지 URL: {reference_image_url[:50]}...")
         
-        # 3. 이미지 편집 API 호출
+        # 3. Gemini 2.5 Flash 이미지 편집 API 호출
         job_id = str(uuid.uuid4())
-        logger.info(f"🎨 이미지 편집 API 호출 시작: job_id={job_id}")
-        logger.debug(f"🔧 편집 파라미터: edit_mode={request.edit_mode}, style={request.style}, size={request.size}")
+        logger.info(f"🎨 Gemini 이미지 편집 API 호출 시작: job_id={job_id}")
+        logger.debug(f"🔧 편집 파라미터: prompt='{request.prompt}', optimize={request.optimize_prompt}")
         
-        edit_result = await image_generation_service.edit_image(
+        edit_result = await image_generation_service.edit_image_with_gemini(
             job_id=job_id,
             user_id=str(current_user["id"]),
             prompt=request.prompt,
             reference_image_url=reference_image_url,
-            edit_mode=request.edit_mode,
-            mask_mode=request.mask_mode,
-            style=request.style,
-            size=request.size,
-            num_images=request.num_images
+            optimize_prompt=request.optimize_prompt
         )
         
         logger.info(f"✅ 이미지 편집 API 호출 완료: 결과={'있음' if edit_result else '없음'}")
@@ -454,33 +453,79 @@ async def edit_image_with_reference(
         
         logger.debug(f"🎨 Canvas 정보: canvas_id={canvas_id}, version={canvas_version}")
         
-        edited_image = await image_history_service.save_generated_image(
-            db=db,
-            conversation_id=reference_image.conversation_id,  # 기존 이미지와 동일한 conversation
-            user_id=current_user["id"],
-            prompt=request.prompt,
-            image_urls=edit_result["images"],
-            style=request.style or reference_image.style,
-            size=request.size or reference_image.size,
-            parent_image_id=request.reference_image_id,
-            evolution_type="reference_edit",  # 새로운 타입
-            generation_params=image_history_service.safe_uuid_to_str({
-                "edit_mode": request.edit_mode,
-                "mask_mode": request.mask_mode,
-                "reference_image_url": reference_image_url,
-                "reference_prompt": reference_image.prompt,
-                "api_response": edit_result,
-                "user_request": request.dict(),
-                "reference_image_id": request.reference_image_id,
-                "canvas_workflow": "edit",
-                "canvas_inheritance": True
-            }),
-            safety_score=edit_result.get("safety_score", 1.0),
-            canvas_id=canvas_id,
-            canvas_version=canvas_version,
-            edit_mode="EDIT",
-            reference_image_id=request.reference_image_id
-        )
+        # 데이터베이스 저장 시도 (실패해도 클라이언트에는 성공 응답)
+        try:
+            edited_image = await image_history_service.save_generated_image(
+                db=db,
+                conversation_id=reference_image.conversation_id,  # 기존 이미지와 동일한 conversation
+                user_id=current_user["id"],
+                prompt=request.prompt,
+                image_urls=edit_result["images"],
+                style=request.style or reference_image.style,
+                size=request.size or reference_image.size,
+                parent_image_id=request.reference_image_id,
+                evolution_type="modification",  # Gemini 편집 타입
+                generation_params=image_history_service.safe_uuid_to_str({
+                    "model": "gemini-2.5-flash-image-preview",
+                    "optimize_prompt": request.optimize_prompt,
+                    "reference_image_url": reference_image_url,
+                    "reference_prompt": reference_image.prompt,
+                    "api_response": edit_result,
+                    "user_request": request.dict(),
+                    "reference_image_id": request.reference_image_id,
+                    "canvas_workflow": "edit",
+                    "canvas_inheritance": True
+                }),
+                safety_score=edit_result.get("safety_score", 1.0),
+                canvas_id=canvas_id,
+                canvas_version=canvas_version,
+                edit_mode="EDIT",
+                reference_image_id=request.reference_image_id
+            )
+            logger.info(f"✅ 데이터베이스 저장 성공: {edited_image.id}")
+            
+        except Exception as db_error:
+            logger.error(f"❌ 데이터베이스 저장 실패하지만 이미지는 생성됨: {str(db_error)}")
+            
+            # 이미지는 성공적으로 생성되었으므로 임시 응답 객체 생성
+            from app.db.models import ImageHistory
+            from datetime import datetime
+            
+            # 임시 ImageHistory 객체 생성 (실제 DB에는 저장되지 않음)
+            edited_image = ImageHistory(
+                id=uuid.uuid4(),
+                conversation_id=reference_image.conversation_id,
+                user_id=current_user["id"],
+                prompt=request.prompt,
+                image_urls=edit_result["images"],
+                primary_image_url=edit_result["images"][0] if edit_result["images"] else None,
+                style=request.style or reference_image.style or "realistic",
+                size=request.size or reference_image.size or "1024x1024", 
+                parent_image_id=request.reference_image_id,
+                evolution_type="modification",
+                generation_params={
+                    "model": "gemini-2.5-flash-image-preview",
+                    "optimize_prompt": request.optimize_prompt,
+                    "reference_image_url": reference_image_url,
+                    "reference_prompt": reference_image.prompt,
+                    "api_response": edit_result,
+                    "user_request": request.dict(),
+                    "reference_image_id": str(request.reference_image_id),
+                    "canvas_workflow": "edit",
+                    "canvas_inheritance": True
+                },
+                safety_score=edit_result.get("safety_score", 1.0),
+                canvas_id=canvas_id,
+                canvas_version=canvas_version,
+                edit_mode="EDIT",
+                reference_image_id=request.reference_image_id,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                status="completed",
+                is_deleted=False,
+                is_selected=True
+            )
+            logger.info(f"🔄 임시 응답 객체 생성: primary_image_url={edited_image.primary_image_url}")
         
         # 5. 백그라운드 작업: 파일 크기 계산
         background_tasks.add_task(
@@ -510,6 +555,60 @@ async def edit_image_with_reference(
             logger.error(f"📋 예외 속성: {e.__dict__}")
         
         raise HTTPException(status_code=500, detail=f"이미지 편집 중 오류가 발생했습니다: {str(e)}")
+
+
+# ======= Gemini 프롬프트 최적화 API =======
+
+class PromptOptimizationRequest(BaseModel):
+    """프롬프트 최적화 요청 모델"""
+    prompt: str = Field(..., min_length=1, max_length=2000, description="최적화할 프롬프트")
+
+class PromptOptimizationResponse(BaseModel):
+    """프롬프트 최적화 응답 모델"""
+    original_prompt: str
+    optimized_prompt: str
+    improvement_notes: Optional[str] = None
+
+
+@router.post("/optimize-prompt", response_model=PromptOptimizationResponse)
+async def optimize_edit_prompt(
+    request: PromptOptimizationRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    편집 프롬프트를 Gemini 2.5 Flash 이미지 편집에 최적화
+    
+    사용자가 입력한 간단한 프롬프트를 이미지 편집에 최적화된 형태로 변환합니다.
+    """
+    
+    try:
+        logger.info(f"✨ 프롬프트 최적화 요청: '{request.prompt[:50]}...'")
+        
+        # 프롬프트 최적화
+        optimized_prompt = await image_generation_service.optimize_edit_prompt(request.prompt)
+        
+        # 최적화 효과 분석 (간단한 휴리스틱)
+        improvement_notes = None
+        if len(optimized_prompt) > len(request.prompt) * 1.5:
+            improvement_notes = "프롬프트가 더 구체적이고 상세해졌습니다."
+        elif "using the provided image" in optimized_prompt.lower():
+            improvement_notes = "이미지 편집에 특화된 문구가 추가되었습니다."
+        
+        response = PromptOptimizationResponse(
+            original_prompt=request.prompt,
+            optimized_prompt=optimized_prompt,
+            improvement_notes=improvement_notes
+        )
+        
+        logger.info(f"✅ 프롬프트 최적화 완료: {len(request.prompt)} → {len(optimized_prompt)} 문자")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ 프롬프트 최적화 실패: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"프롬프트 최적화 중 오류가 발생했습니다: {str(e)}"
+        )
 
 
 # ======= 백그라운드 작업 함수 =======

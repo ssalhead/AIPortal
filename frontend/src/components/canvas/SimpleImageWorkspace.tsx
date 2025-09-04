@@ -31,12 +31,8 @@ interface SimpleImageWorkspaceProps {
   // Canvas는 편집 전용으로 운영됨
 }
 
-// Context7 문서 기반 안전한 Edit 모드만 지원 (마스킹 불필요)
-type EditModeType = 
-  | 'EDIT_MODE_DEFAULT';
-
-// Evolution 타입 확장
-type EvolutionType = 'variation' | 'modification' | 'extension' | 'based_on' | 'reference_edit';
+// Evolution 타입 확장 (Gemini 편집 포함)
+type EvolutionType = 'variation' | 'modification' | 'extension' | 'based_on' | 'gemini_edit';
 
 export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({ 
   conversationId,
@@ -46,12 +42,13 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
   const [newPrompt, setNewPrompt] = useState('');
   const [evolutionType, setEvolutionType] = useState<EvolutionType>('based_on');
   
-  // 새로운 Edit UI 상태
-  const [editMode, setEditMode] = useState<EditModeType>('EDIT_MODE_DEFAULT');
+  // Gemini 편집 UI 상태
   const [selectedStyle, setSelectedStyle] = useState<string>('realistic');
   const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(initialCanvasId || null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [optimizePrompt, setOptimizePrompt] = useState<boolean>(false);
+  const [isOptimizingPrompt, setIsOptimizingPrompt] = useState<boolean>(false);
   
   // Canvas 관련 상태
   const [canvasVersions, setCanvasVersions] = useState<any[]>([]);
@@ -68,7 +65,8 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
     error,
     historyMap,
     selectedImageMap,
-    loadingMap
+    loadingMap,
+    lastUpdated
   } = useSimpleImageHistoryStore();
   
   // Store 상태를 직접 구독하여 변경 감지
@@ -118,10 +116,100 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
     }
   }, [selectedImage, conversationId]);
   
+  // 이미지 업데이트 이벤트 리스너
+  useEffect(() => {
+    const handleImageUpdate = (event: CustomEvent) => {
+      const { conversationId: eventConversationId, imageId, imageUrl } = event.detail;
+      
+      if (eventConversationId === conversationId) {
+        console.log('🔄 이미지 업데이트 이벤트 수신:', { imageId, imageUrl });
+        
+        // 히스토리 강제 재로드
+        loadHistory(conversationId, true);
+        
+        // 모든 이미지 요소에 캐시 버스팅 적용 (undefined 안전장치 포함)
+        setTimeout(() => {
+          // imageUrl 유효성 확인
+          if (!imageUrl || imageUrl === 'undefined' || imageUrl === 'null') {
+            console.warn('⚠️ Canvas 이미지 새로고침 생략 - 잘못된 URL:', imageUrl);
+            return;
+          }
+          
+          const baseUrl = imageUrl.split('?')[0];
+          if (!baseUrl) {
+            console.warn('⚠️ Canvas 이미지 새로고침 생략 - 기본 URL 추출 실패:', imageUrl);
+            return;
+          }
+          
+          const images = document.querySelectorAll('img');
+          images.forEach((img) => {
+            if (img.src && img.src.includes(baseUrl)) {
+              const originalSrc = img.src.split('?')[0];
+              img.src = `${originalSrc}?t=${Date.now()}`;
+              console.log('🖼️ Canvas 이미지 강제 새로고침:', img.src);
+            }
+          });
+        }, 100);
+      }
+    };
+
+    // 이벤트 리스너 등록
+    window.addEventListener('image-updated', handleImageUpdate as EventListener);
+    
+    // 정리 함수
+    return () => {
+      window.removeEventListener('image-updated', handleImageUpdate as EventListener);
+    };
+  }, [conversationId, loadHistory]);
+  
   // Canvas는 편집 전용: 새 이미지는 채팅창에서 생성
   // handleGenerateImage 메서드 제거됨
   
-  // Canvas 내 이미지 편집 핸들러 (EDIT 모드)
+  // 프롬프트 최적화 함수
+  const handleOptimizePrompt = async () => {
+    if (!newPrompt.trim()) {
+      console.warn('⚠️ 최적화할 프롬프트가 없습니다');
+      return;
+    }
+    
+    setIsOptimizingPrompt(true);
+    try {
+      console.log('✨ 프롬프트 최적화 시작:', newPrompt);
+      
+      const response = await fetch('/api/v1/images/history/optimize-prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          prompt: newPrompt
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`프롬프트 최적화 실패: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ 프롬프트 최적화 완료:', result);
+      
+      // 최적화된 프롬프트로 교체
+      setNewPrompt(result.optimized_prompt);
+      
+      // 사용자에게 개선 사항 알림 (간단한 콘솔 로그)
+      if (result.improvement_notes) {
+        console.log('📝 개선사항:', result.improvement_notes);
+      }
+      
+    } catch (error) {
+      console.error('❌ 프롬프트 최적화 실패:', error);
+    } finally {
+      setIsOptimizingPrompt(false);
+    }
+  };
+
+  // Gemini 기반 이미지 편집 핸들러
   const handleEditImage = async () => {
     console.log('🔍 Canvas 편집 버튼 클릭됨');
     console.log('🔍 상태 확인:', {
@@ -142,18 +230,18 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
     }
     
     try {
-      console.log('✏️ EDIT 모드 - Canvas 내 이미지 편집 시작');
+      console.log('✏️ Gemini 편집 모드 - Canvas 내 이미지 편집 시작');
       console.log(`Canvas ID: ${currentCanvasId}, 참조 이미지: ${selectedImage.id}`);
       console.log('📋 편집 요청 데이터:', {
         conversationId,
         selectedImageId: selectedImage.id,
         newPrompt: newPrompt,
-        evolutionType: evolutionType,
+        evolutionType: 'gemini_edit',
+        optimizePrompt,
         source: 'canvas',
-        workflowMode: 'edit',
+        workflowMode: 'gemini_edit',
         canvasId: currentCanvasId,
         referenceImageId: selectedImage.id,
-        editModeType: editMode,
         style: selectedStyle,
         size: selectedSize
       });
@@ -162,12 +250,12 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
         conversationId,
         selectedImageId: selectedImage.id,
         newPrompt: newPrompt,
-        evolutionType: evolutionType as any,
+        evolutionType: 'gemini_edit' as any,
+        optimizePrompt,
         source: 'canvas', // REQUEST SOURCE: CANVAS  
-        workflowMode: 'edit',
+        workflowMode: 'gemini_edit',
         canvasId: currentCanvasId,
         referenceImageId: selectedImage.id,
-        editModeType: editMode,
         style: selectedStyle,
         size: selectedSize
       });
@@ -176,23 +264,18 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
       
       setNewPrompt('');
       
-      const editModeMap = {
-        'EDIT_MODE_INPAINT_INSERTION': '삽입 편집',
-        'EDIT_MODE_INPAINT_REMOVAL': '제거 편집',
-        'EDIT_MODE_STYLE': '스타일 변경',
-        'EDIT_MODE_OUTPAINT': '확장 편집'
-      };
-      
-      const editModeKorean = editModeMap[editMode] || editMode;
-      console.log(`✅ ${editModeKorean}이 완료되었으며 새 버전이 생성되었습니다!`);
+      console.log(`✅ Gemini 이미지 편집이 완료되었으며 새 버전이 생성되었습니다!`);
+      if (optimizePrompt) {
+        console.log(`📈 프롬프트 최적화 기능이 적용되었습니다.`);
+      }
       
     } catch (error) {
-      console.error('❌ EDIT 모드 이미지 편집 실패:', error);
+      console.error('❌ Gemini 이미지 편집 실패:', error);
       
       if (error instanceof Error && error.message.includes('500')) {
-        console.error('⚠️ 서버에서 이미지 편집 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+        console.error('⚠️ 서버에서 Gemini 이미지 편집 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
       } else {
-        console.error('⚠️ 예상치 못한 오류가 발생했습니다. Canvas 상태를 확인해주세요.');
+        console.error('⚠️ 예상치 못한 오류가 발생했습니다. 네트워크 상태나 API 키를 확인해주세요.');
       }
     }
   };
@@ -282,7 +365,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
               <div className="flex gap-3">
                 <img 
                   key={`ref-${selectedImage.id}-${selectedImage.updatedAt || selectedImage.createdAt}`}
-                  src={`${selectedImage.primaryImageUrl || ''}${selectedImage.primaryImageUrl?.includes('?') ? '&' : '?'}t=${Date.now()}`}
+                  src={`${selectedImage.primaryImageUrl || ''}${selectedImage.primaryImageUrl?.includes('?') ? '&' : '?'}t=${lastUpdated || Date.now()}`}
                   alt="참조 이미지"
                   className="w-16 h-16 rounded object-cover border"
                 />
@@ -309,6 +392,39 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
               placeholder="예: '배경을 바다로 바꿔주세요', '빨간색 모자를 추가해주세요', '전체적으로 더 밝게 만들어주세요'"
               className="w-full h-24 px-3 py-2 border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
             />
+            
+            {/* 프롬프트 최적화 버튼과 옵션 */}
+            <div className="flex items-center justify-between mt-2">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={optimizePrompt}
+                    onChange={(e) => setOptimizePrompt(e.target.checked)}
+                    className="rounded"
+                  />
+                  <span className="text-sm text-gray-600">편집 시 프롬프트 최적화</span>
+                </label>
+              </div>
+              
+              <button
+                onClick={handleOptimizePrompt}
+                disabled={!newPrompt.trim() || isOptimizingPrompt}
+                className="flex items-center gap-1 px-3 py-1 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isOptimizingPrompt ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>최적화 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4" />
+                    <span>✨ 프롬프트 개선</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* 단순화된 편집 안내 */}
@@ -437,7 +553,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
           <div className="text-xs text-gray-500 bg-white p-3 rounded border">
             <div>
               <span className="font-medium text-purple-600">🎨 스마트 편집 모드:</span> 
-              Google Cloud Imagen 4를 사용하여 안전하고 빠른 이미지 편집을 제공합니다. 
+              Gemini 2.5 Flash Image Preview를 사용하여 자연어 프롬프트로 간편한 이미지 편집을 제공합니다. 
               "색상을 더 따뜻하게", "배경을 파란 하늘로" 등 구체적으로 설명해주세요.
             </div>
           </div>
@@ -467,6 +583,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
                 onSelect={() => setSelectedImage(conversationId, image.id)}
                 onDelete={() => handleDeleteImage(image.id)}
                 onDownload={() => handleDownloadImage(image.primaryImageUrl, image.prompt)}
+                lastUpdated={lastUpdated}
               />
             ))}
           </div>
@@ -483,11 +600,13 @@ interface ImageHistoryCardProps {
   onSelect: () => void;
   onDelete: () => void;
   onDownload: () => void;
+  lastUpdated?: number;
 }
 
 const ImageHistoryCard: React.FC<ImageHistoryCardProps> = ({
   image,
   isSelected,
+  lastUpdated,
   onSelect,
   onDelete,
   onDownload
@@ -526,7 +645,7 @@ const ImageHistoryCard: React.FC<ImageHistoryCardProps> = ({
       <div className="aspect-square bg-gray-100 relative">
         <img
           key={`gallery-${image.id}-${image.updatedAt || image.createdAt}`}
-          src={`${image.primaryImageUrl || ''}${image.primaryImageUrl?.includes('?') ? '&' : '?'}t=${Date.now()}`}
+          src={`${image.primaryImageUrl || ''}${image.primaryImageUrl?.includes('?') ? '&' : '?'}t=${lastUpdated || Date.now()}`}
           alt={image.prompt}
           className="w-full h-full object-cover"
           onError={(e) => {
@@ -606,7 +725,7 @@ const ImageHistoryCard: React.FC<ImageHistoryCardProps> = ({
                 <>
                   <span>•</span>
                   <span className={`font-medium ${
-                    image.evolutionType === 'reference_edit' ? 'text-purple-600' : 'text-green-600'
+                    image.evolutionType === 'reference_edit' || image.evolutionType === 'gemini_edit' ? 'text-purple-600' : 'text-green-600'
                   }`}>
                     {image.evolutionType}
                   </span>

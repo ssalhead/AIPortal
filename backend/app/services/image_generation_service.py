@@ -5,6 +5,8 @@ GCP Imagen 4 이미지 생성 서비스
 import asyncio
 import json
 import uuid
+import time
+import traceback
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -19,11 +21,12 @@ from app.db.session import AsyncSessionLocal
 from app.db.models.image_generation import GeneratedImage
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Google GenAI 클라이언트 import
+# Google GenAI 클라이언트 import (Imagen 4용)
 try:
     from google import genai
     from google.genai.types import (
         GenerateImagesConfig,
+        GenerateContentConfig,
         EditImageConfig,
         EditMode,
         RawReferenceImage,
@@ -41,6 +44,13 @@ except ImportError:
     EditImageConfig = None
     RawReferenceImage = None
     MaskReferenceImage = None
+
+# PIL 이미지 처리용
+try:
+    from PIL import Image as PILImage
+except ImportError:
+    logger.warning("PIL 라이브러리가 설치되지 않음. 'pip install pillow'로 설치해주세요.")
+    PILImage = None
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +74,12 @@ class ImageGenerationService:
         self.client = None
         self.use_vertex_ai = settings.use_vertex_ai
         
-        if genai:
+        # Gemini 2.5 Flash Image Preview 클라이언트 초기화
+        self.gemini_client = None
+        self.gemini_client = None
+        self.gemini_model_id = "gemini-2.5-flash-image-preview"
+        
+        if 'genai' in globals() and globals()['genai']:
             try:
                 if self.use_vertex_ai and self.google_project_id:
                     # Vertex AI 클라이언트 사용 - 서비스 계정 키 설정
@@ -108,6 +123,67 @@ class ImageGenerationService:
                 self.use_vertex_ai = False
         else:
             logger.warning("⚠️ google-genai 라이브러리 없음 - Mock 이미지 생성만 가능")
+        
+        # Gemini 2.5 Flash Image Preview 모델 초기화 (Vertex AI 방식)
+        try:
+            if genai and self.use_vertex_ai and self.google_project_id:
+                # Vertex AI 클라이언트 사용 - 이미지 생성을 위한 설정
+                logger.info(f"🔧 Gemini Vertex AI 클라이언트 초기화 시도 (Project: {self.google_project_id}, Location: global)")
+                
+                # 서비스 계정 키 설정
+                if self.google_credentials:
+                    if not os.path.isabs(self.google_credentials):
+                        abs_path = os.path.abspath(self.google_credentials)
+                        self.google_credentials = abs_path
+                    
+                    if os.path.exists(self.google_credentials):
+                        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.google_credentials
+                        logger.info(f"🔑 Gemini용 Google 서비스 계정 키 설정: {self.google_credentials}")
+                        
+                        # 사용자 제공 해결책 적용: credentials 명시적 로드
+                        try:
+                            from google.oauth2 import service_account
+                        except ImportError:
+                            # fallback to google.auth.service_account
+                            from google.auth import service_account
+                        
+                        credentials = service_account.Credentials.from_service_account_file(
+                            self.google_credentials,
+                            scopes=['https://www.googleapis.com/auth/cloud-platform']
+                        )
+                        
+                        # Vertex AI 클라이언트 초기화 (credentials 명시적 전달)
+                        # Gemini 2.5 Flash Image Preview는 global 리전 사용 필요
+                        self.gemini_client = genai.Client(
+                            location="global",  # Image Preview 모델은 global 리전 사용
+                            project=self.google_project_id,
+                            credentials=credentials,
+                            vertexai=True
+                        )
+                        logger.info(f"✅ Gemini Vertex AI 클라이언트 초기화 성공 (credentials 명시적 전달): {self.gemini_model_id}")
+                    else:
+                        logger.error(f"❌ Gemini용 서비스 계정 키 파일을 찾을 수 없음: {self.google_credentials}")
+                        self.gemini_client = None
+                else:
+                    logger.error("❌ GOOGLE_APPLICATION_CREDENTIALS 설정 필요")
+                    self.gemini_client = None
+            elif genai and self.google_api_key:
+                # Developer API 클라이언트 사용 (제한된 기능)
+                logger.warning("⚠️ Vertex AI 설정 누락 - Developer API 클라이언트 사용 (이미지 생성 제한)")
+                self.gemini_client = genai.Client(api_key=self.google_api_key)
+                logger.info("✅ Gemini Developer API 클라이언트 초기화 성공 (제한된 기능)")
+            else:
+                if not genai:
+                    logger.warning("⚠️ google-genai 라이브러리가 import되지 않음")
+                if not self.google_api_key:
+                    logger.warning("⚠️ Google API Key 없음")
+                if not self.google_project_id:
+                    logger.warning("⚠️ Google Project ID 없음")
+                self.gemini_client = None
+                
+        except Exception as e:
+            logger.error(f"❌ Gemini 클라이언트 초기화 실패: {e}")
+            self.gemini_client = None
     
     async def generate_image(
         self,
@@ -1203,6 +1279,414 @@ class ImageGenerationService:
         
         logger.warning(f"❌ 파일 접근 실패: {file_path} ({max_retries}번 시도 후 포기)")
         return False
+
+    async def edit_image_with_gemini(
+        self,
+        job_id: str,
+        user_id: str,
+        prompt: str,
+        reference_image_url: str,
+        optimize_prompt: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Gemini 2.5 Flash Image Preview를 사용한 이미지 편집
+        
+        Args:
+            job_id: 작업 ID
+            user_id: 사용자 ID  
+            prompt: 편집 요청 프롬프트 (자연어)
+            reference_image_url: 편집할 기준 이미지 URL
+            optimize_prompt: 프롬프트 최적화 여부
+            
+        Returns:
+            Dict containing status, images, and metadata
+        """
+        
+        try:
+            if not self.gemini_client:
+                logger.error("❌ Gemini 2.5 Flash Image Preview 클라이언트가 초기화되지 않음")
+                raise ValueError("Gemini Image Preview 클라이언트 초기화 실패")
+            
+            logger.info(f"🎨 Gemini 2.5 Flash 이미지 편집 시작: {job_id}")
+            logger.debug(f"📋 편집 정보: prompt='{prompt[:50]}...', optimize={optimize_prompt}")
+            
+            # 작업 정보 캐시에 저장
+            job_info = {
+                "job_id": job_id,
+                "user_id": user_id,
+                "prompt": prompt,
+                "reference_image_url": reference_image_url,
+                "optimize_prompt": optimize_prompt,
+                "status": "processing",
+                "created_at": datetime.utcnow().isoformat(),
+                "num_images": 1,
+                "model": self.gemini_model_id,
+                "generation_method": "modification"
+            }
+            
+            self.jobs_cache[job_id] = job_info
+            
+            # 프롬프트 최적화 (옵션)
+            final_prompt = prompt
+            if optimize_prompt:
+                try:
+                    final_prompt = await self.optimize_edit_prompt(prompt)
+                    logger.info(f"✨ 프롬프트 최적화 완료: '{final_prompt[:50]}...'")
+                except Exception as e:
+                    logger.warning(f"⚠️ 프롬프트 최적화 실패, 원본 사용: {e}")
+                    final_prompt = prompt
+            
+            # 직접 이미지 편집 수행
+            logger.info(f"🖼️ 참조 이미지 로드 중: {reference_image_url}")
+            
+            # 참조 이미지 로드
+            reference_image = await self._load_reference_image_with_fallback(reference_image_url)
+            if not reference_image:
+                raise ValueError("참조 이미지를 로드할 수 없습니다")
+            
+            # 편집 프롬프트 구성 (이미지 생성 요청)
+            edit_instruction = f"Edit this image as follows: {final_prompt}. Keep the original style and composition while making the requested changes naturally."
+            
+            logger.debug(f"📝 편집 명령: {edit_instruction[:100]}...")
+            
+            # Gemini를 사용하여 이미지 편집
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._generate_content_with_image(edit_instruction, reference_image)
+            )
+            
+            # Gemini 응답에서 직접 이미지 추출 (Google 공식 예제 방식)
+            images = await self._process_gemini_response(response, job_id)
+            
+            if images:
+                logger.info(f"🎉 Gemini 2.5 Flash Image Preview 편집 성공: {len(images)}개 이미지")
+                return {
+                    "status": "completed",
+                    "images": images,
+                    "safety_score": 1.0,
+                    "metadata": {
+                        "model": self.gemini_model_id,
+                        "generation_method": "gemini_direct_edit",
+                        "prompt_optimized": optimize_prompt,
+                        "final_prompt": final_prompt[:100] + "..." if len(final_prompt) > 100 else final_prompt
+                    }
+                }
+            else:
+                raise Exception("편집된 이미지를 생성할 수 없습니다")
+            
+        except Exception as e:
+            logger.error(f"Gemini 이미지 편집 시작 실패: {e}")
+            # 캐시에 실패 상태 저장
+            if job_id in self.jobs_cache:
+                self.jobs_cache[job_id]["status"] = "failed"
+                self.jobs_cache[job_id]["error_message"] = str(e)
+            
+            raise e
+    
+    # 이제 사용하지 않는 메서드 - 직접 편집으로 대체됨
+    # async def _edit_image_with_gemini_async(self, job_id: str, final_prompt: str):
+
+    def _generate_content_with_image(self, edit_instruction: str, image):
+        """Gemini 2.5 Flash Image Preview를 사용한 이미지 편집"""
+        try:
+            # 사용자 제공 해결책 적용: GenerateContentConfig with response_modalities
+            config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+                candidate_count=1,
+            )
+            
+            # Google GenAI 공식 문서 패턴 + 이미지 생성 config 사용
+            response = self.gemini_client.models.generate_content(
+                model=self.gemini_model_id,
+                contents=[edit_instruction, image],
+                config=config
+            )
+            logger.debug(f"✅ Gemini API 호출 성공 (response_modalities=TEXT,IMAGE)")
+            
+            # 응답 구조 분석을 위한 상세 로깅
+            logger.info(f"📋 Gemini 응답 타입: {type(response)}")
+            logger.info(f"📋 Gemini 응답 속성: {dir(response)}")
+            
+            if hasattr(response, 'candidates'):
+                logger.info(f"📋 응답 후보 수: {len(response.candidates) if response.candidates else 0}")
+                if response.candidates:
+                    candidate = response.candidates[0]
+                    logger.info(f"📋 첫 번째 후보 타입: {type(candidate)}")
+                    logger.info(f"📋 첫 번째 후보 속성: {dir(candidate)}")
+                    
+                    if hasattr(candidate, 'content'):
+                        content = candidate.content
+                        logger.info(f"📋 콘텐츠 타입: {type(content)}")
+                        logger.info(f"📋 콘텐츠 속성: {dir(content)}")
+                        
+                        if hasattr(content, 'parts'):
+                            logger.info(f"📋 파트 수: {len(content.parts) if content.parts else 0}")
+                            for i, part in enumerate(content.parts):
+                                logger.info(f"📋 파트 {i} 타입: {type(part)}")
+                                logger.info(f"📋 파트 {i} 속성: {dir(part)}")
+                                if hasattr(part, 'text'):
+                                    text_content = part.text[:200] if part.text else 'None'
+                                    logger.info(f"📋 파트 {i} 텍스트: {text_content}...")
+                                if hasattr(part, 'inline_data'):
+                                    logger.info(f"📋 파트 {i} 인라인 데이터 존재: {part.inline_data is not None}")
+            
+            return response
+        except Exception as e:
+            logger.error(f"❌ Gemini generate_content 실패: {e}")
+            raise e
+
+    async def _process_gemini_response(self, response, job_id: str) -> List[str]:
+        """Gemini 응답에서 이미지를 추출하고 저장 (Google 공식 예제 방식)"""
+        
+        try:
+            images = []
+            
+            # Chat 응답에서는 response.candidates[0].content.parts에 직접 접근
+            if not hasattr(response, 'candidates') or not response.candidates or len(response.candidates) == 0:
+                logger.error("❌ Gemini 응답에 후보가 없음")
+                raise ValueError("Gemini API 응답이 비어있습니다")
+            
+            candidate = response.candidates[0]
+            if not hasattr(candidate, 'content') or not candidate.content or not candidate.content.parts:
+                logger.error("❌ Gemini 응답에 콘텐츠가 없음")
+                raise ValueError("Gemini API 응답 콘텐츠가 비어있습니다")
+            
+            # Google 공식 문서 패턴: content.parts 순회
+            for i, part in enumerate(candidate.content.parts):
+                logger.info(f"🔍 파트 {i} 처리: {type(part)}")
+                logger.info(f"🔍 파트 {i} 속성들: {dir(part)}")
+                
+                # 디버깅: part의 모든 속성 확인
+                if hasattr(part, 'inline_data'):
+                    logger.info(f"🔍 파트 {i} inline_data: {part.inline_data}")
+                    if part.inline_data is not None:
+                        logger.info(f"🔍 파트 {i} inline_data.data 크기: {len(part.inline_data.data) if hasattr(part.inline_data, 'data') else 'None'}")
+                        logger.info(f"🔍 파트 {i} inline_data 속성: {dir(part.inline_data)}")
+                        logger.info(f"🔍 파트 {i} inline_data 타입: {type(part.inline_data)}")
+                
+                if hasattr(part, 'text'):
+                    text_content = part.text[:200] if part.text else 'None'
+                    logger.info(f"🔍 파트 {i} text: {text_content}")
+                
+                if hasattr(part, 'function_call'):
+                    logger.info(f"🔍 파트 {i} function_call: {part.function_call}")
+                
+                # 추가 속성 체크
+                for attr_name in ['data', 'image_data', 'blob', 'binary_data', 'file_data']:
+                    if hasattr(part, attr_name):
+                        attr_value = getattr(part, attr_name)
+                        logger.info(f"🔍 파트 {i} {attr_name}: {attr_value is not None} (타입: {type(attr_value)})")
+                
+                # 이미지 데이터 추출 시도 (여러 방법)
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    logger.info(f"📸 inline_data 방식으로 이미지 파트 {i} 발견")
+                    
+                    try:
+                        # Google 공식 예제 패턴
+                        from io import BytesIO
+                        image = PILImage.open(BytesIO(part.inline_data.data))
+                        
+                        # 파일로 저장
+                        saved_url = await self._save_gemini_image(image, job_id, i)
+                        images.append(saved_url)
+                        
+                        logger.info(f"✅ 이미지 {i+1} 처리 완료: {saved_url[:50]}...")
+                        
+                    except Exception as part_error:
+                        logger.error(f"❌ 이미지 파트 {i} (inline_data) 처리 실패: {part_error}")
+                        continue
+                
+                # as_image 메서드로도 시도
+                elif hasattr(part, 'as_image'):
+                    logger.info(f"📸 as_image 방식으로 이미지 파트 {i} 시도")
+                    
+                    try:
+                        image = part.as_image()
+                        if image:
+                            # 파일로 저장
+                            saved_url = await self._save_gemini_image(image, job_id, i)
+                            images.append(saved_url)
+                            
+                            logger.info(f"✅ 이미지 {i+1} (as_image) 처리 완료: {saved_url[:50]}...")
+                    
+                    except Exception as part_error:
+                        logger.error(f"❌ 이미지 파트 {i} (as_image) 처리 실패: {part_error}")
+                        continue
+                        
+                elif hasattr(part, 'text') and part.text:
+                    logger.info(f"📝 텍스트 파트 {i}: {part.text[:200]}...")
+                    # 텍스트가 이미지 설명인지 확인
+                    if any(keyword in part.text.lower() for keyword in ['이미지', 'image', '생성', '편집', '바뀜', 'edited']):
+                        logger.warning(f"⚠️ 파트 {i}는 이미지 설명으로 보임 - 실제 이미지가 아닌 텍스트 응답일 수 있음")
+            
+            if not images:
+                logger.error("❌ 모든 이미지 파트 처리 실패")
+                raise ValueError("Gemini 응답에서 유효한 이미지를 찾을 수 없습니다")
+            
+            logger.info(f"🎉 Gemini 이미지 편집 완료: {len(images)}개 이미지")
+            return images
+            
+        except Exception as e:
+            logger.error(f"❌ Gemini 응답 처리 실패: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"💣 상세 오류:\n{traceback.format_exc()}")
+            raise e
+
+    async def _save_gemini_image(self, image, job_id: str, index: int) -> str:
+        """Gemini로 편집된 이미지를 파일로 저장 (향상된 로깅)"""
+        
+        start_time = time.time()
+        logger.info(f"💾 Gemini 이미지 저장 시작: {job_id}_{index}")
+        
+        try:
+            # 업로드 디렉토리 설정
+            upload_dir = Path(settings.UPLOAD_DIR if hasattr(settings, 'UPLOAD_DIR') else './uploads')
+            image_dir = upload_dir / "generated_images"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"📁 저장 디렉토리 준비: {image_dir}")
+            
+            # 파일명 생성
+            filename = f"{job_id}_gemini_edit_{index}.png"
+            file_path = image_dir / filename
+            logger.debug(f"📄 파일 경로: {file_path}")
+            
+            # 이미지 정보 로깅
+            try:
+                if hasattr(image, 'size'):
+                    logger.info(f"🖼️ 이미지 크기: {image.size[0]}x{image.size[1]}")
+                if hasattr(image, 'mode'):
+                    logger.debug(f"🎨 이미지 모드: {image.mode}")
+            except Exception as info_error:
+                logger.debug(f"⚠️ 이미지 정보 조회 실패: {info_error}")
+            
+            # 이미지 저장 (PIL Image 객체)
+            save_start = time.time()
+            image.save(str(file_path), "PNG")
+            save_duration = time.time() - save_start
+            
+            # 파일 저장 확인 및 크기 로깅
+            if file_path.exists():
+                file_size = file_path.stat().st_size
+                logger.info(f"✅ 이미지 저장 성공: {filename} ({file_size:,} bytes, {save_duration:.3f}초)")
+            else:
+                raise FileNotFoundError(f"이미지 파일이 생성되지 않음: {file_path}")
+            
+            # URL 반환 (실제 서버 URL로 변경 필요)
+            base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
+            image_url = f"{base_url}/api/v1/images/generated/{filename}"
+            
+            # 전체 처리 시간 로깅
+            total_duration = time.time() - start_time
+            logger.info(f"🎉 이미지 파이프라인 완료: {image_url} (총 {total_duration:.3f}초)")
+            
+            # 파일 접근성 확인 (비동기)
+            import asyncio
+            asyncio.create_task(self._verify_file_accessibility(file_path, image_url))
+            
+            return image_url
+            
+        except Exception as e:
+            error_duration = time.time() - start_time
+            logger.error(f"❌ Gemini 이미지 저장 실패 ({error_duration:.3f}초 경과): {e}")
+            logger.error(f"💣 상세 오류: {traceback.format_exc()}")
+            
+            # 저장 실패 시 Base64로 대체
+            try:
+                from io import BytesIO
+                import base64
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                image_bytes = buffer.getvalue()
+                base64_data = base64.b64encode(image_bytes).decode()
+                fallback_url = f"data:image/png;base64,{base64_data}"
+                logger.info(f"🔄 Base64 대체 URL 생성: {len(base64_data)} 문자")
+                return fallback_url
+            except Exception as fallback_error:
+                logger.error(f"💥 Base64 대체 실패: {fallback_error}")
+                raise e
+    
+    async def _verify_file_accessibility(self, file_path: Path, image_url: str) -> None:
+        """파일 접근성 확인 (비동기)"""
+        try:
+            # 파일 시스템 접근성 확인
+            await asyncio.sleep(0.1)  # 파일 시스템 sync 대기
+            
+            if file_path.exists() and file_path.is_file():
+                file_size = file_path.stat().st_size
+                logger.info(f"🔍 파일 접근성 확인 - 존재: ✅, 크기: {file_size:,} bytes")
+                
+                # HTTP 접근성 확인 (선택적)
+                try:
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(image_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                            if response.status == 200:
+                                logger.info(f"🌐 HTTP 접근성 확인 - 상태: {response.status} ✅")
+                            else:
+                                logger.warn(f"⚠️ HTTP 접근성 확인 - 상태: {response.status}")
+                except Exception as http_error:
+                    logger.debug(f"🔍 HTTP 접근성 확인 생략: {http_error}")
+            else:
+                logger.error(f"❌ 파일 접근성 확인 실패: 파일이 존재하지 않음")
+                
+        except Exception as verify_error:
+            logger.debug(f"🔍 파일 접근성 확인 중 오류: {verify_error}")
+
+    async def optimize_edit_prompt(self, original_prompt: str) -> str:
+        """
+        편집 프롬프트를 이미지 편집에 최적화된 형태로 변환
+        
+        Args:
+            original_prompt: 사용자가 입력한 원본 프롬프트
+            
+        Returns:
+            최적화된 편집 프롬프트
+        """
+        
+        try:
+            if not self.gemini_client:
+                logger.warning("⚠️ Gemini 클라이언트 없음 - 프롬프트 최적화 건너뛰기")
+                return original_prompt
+            
+            # 프롬프트 최적화를 위한 메타 프롬프트
+            optimization_prompt = f"""
+다음 사용자 입력을 이미지 편집에 최적화된 영어 프롬프트로 변환해주세요:
+
+사용자 입력: "{original_prompt}"
+
+요구사항:
+1. "Using the provided image" 로 시작
+2. 구체적이고 명확한 편집 지시사항 포함
+3. 원본 이미지의 스타일, 조명, 구성 유지 언급
+4. 자연스럽고 매끄러운 편집 요청
+5. 영어로 작성
+6. 50-100단어 내외
+
+최적화된 프롬프트만 출력해주세요.
+"""
+            
+            loop = asyncio.get_event_loop()
+            
+            # 텍스트 생성 모델로 프롬프트 최적화
+            text_model = gemini_genai.GenerativeModel("gemini-2.5-flash")
+            
+            response = await loop.run_in_executor(
+                None,
+                lambda: text_model.generate_content(optimization_prompt)
+            )
+            
+            if response.text:
+                optimized_prompt = response.text.strip()
+                logger.debug(f"📝 프롬프트 최적화: '{original_prompt}' → '{optimized_prompt[:50]}...'")
+                return optimized_prompt
+            else:
+                logger.warning("⚠️ 프롬프트 최적화 응답이 비어있음 - 원본 사용")
+                return original_prompt
+                
+        except Exception as e:
+            logger.error(f"❌ 프롬프트 최적화 실패: {e}")
+            return original_prompt
 
 
 # 서비스 인스턴스
