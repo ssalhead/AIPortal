@@ -23,9 +23,9 @@ export class CanvasShareStrategy {
    * 기능별 Canvas 공유 전략 설정
    */
   private static readonly CANVAS_CONFIGS: Record<CanvasToolType, CanvasShareConfig> = {
-    // 이미지 생성: 대화별 단일 Canvas + 완전한 버전 관리
+    // 이미지 생성: 요청별 개별 Canvas + 완전한 버전 관리
     image: {
-      shareType: 'conversation',
+      shareType: 'request',
       persistent: true,
       autoSave: true,
       versionControl: true,
