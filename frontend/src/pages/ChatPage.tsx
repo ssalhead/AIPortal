@@ -17,7 +17,7 @@ import { useSidebarWidth } from '../hooks/useSidebarWidth';
 import { apiService } from '../services/api';
 import { conversationHistoryService } from '../services/conversationHistoryService';
 import { agentSuggestionService } from '../services/agentSuggestionService';
-import { Star, Zap } from 'lucide-react';
+import { Star, Zap, X } from 'lucide-react';
 import type { LLMModel, AgentType, Citation, Source, LLMProvider, ChatResponse, Message, StreamingProgressMetadata, CanvasData } from '../types';
 import { MODEL_MAP, AGENT_TYPE_MAP } from '../types';
 import { CANVAS_SPLIT } from '../constants/layout';
@@ -1480,6 +1480,24 @@ export const ChatPage: React.FC = () => {
               className="flex flex-col bg-gray-100 dark:bg-gray-800 min-w-0 border-l border-gray-200 dark:border-gray-700"
               style={{ width: `${100 - chatWidth}%` }}
             >
+              {/* Canvas 헤더 - 닫기 버튼 포함 */}
+              {hasActiveContent() && (
+                <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Canvas
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => closeCanvas()}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    title="Canvas 닫기"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
               {(() => {
                 // 🎨 활성화된 Canvas 아이템의 타입 확인하여 적절한 워크스페이스 컴포넌트 렌더링
                 const activeItem = items.find(item => item.id === activeItemId);

@@ -760,16 +760,10 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
   },
   
   shouldActivateForConversation: (messages) => {
-    // 메시지 배열에서 Canvas 데이터가 있는지 확인
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return false;
-    }
-    
-    // Canvas 데이터가 있는 메시지가 하나라도 있으면 true
-    return messages.some(message => {
-      // canvas_data 또는 canvasData 필드가 있는지 확인
-      return message?.canvas_data || message?.canvasData;
-    });
+    // 🚫 대화 이력 클릭 시 Canvas 자동 활성화 방지
+    // Canvas는 인라인 링크 클릭을 통해서만 활성화되도록 함
+    console.log('🚫 Canvas 자동 활성화 방지: 인라인 링크 클릭으로만 활성화');
+    return false;
   },
   
   updateCanvasWithCompletedImage: (canvasData) => {
