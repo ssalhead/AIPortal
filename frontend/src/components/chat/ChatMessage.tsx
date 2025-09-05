@@ -141,7 +141,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       console.log('🔍 Canvas 타입 추론:', inferredType);
       
       // 🎯 개별 요청 Canvas ID 확인 (새로운 분리 시스템)
-      const hasRequestCanvasId = canvasData.requestCanvasId || canvasData.request_canvas_id;
+      const hasRequestCanvasId = canvasData.requestCanvasId || 
+                                  canvasData.request_canvas_id || 
+                                  canvasData.metadata?.request_canvas_id;
+      
+      console.log('🔍 requestCanvasId 확인:', {
+        requestCanvasId: canvasData.requestCanvasId,
+        request_canvas_id: canvasData.request_canvas_id,
+        metadata_request_canvas_id: canvasData.metadata?.request_canvas_id,
+        hasRequestCanvasId
+      });
       
       if (hasRequestCanvasId) {
         // 개별 요청별 Canvas 생성/조회 (v4.0 방식 사용)
