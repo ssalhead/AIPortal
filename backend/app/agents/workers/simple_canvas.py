@@ -239,7 +239,8 @@ class SimpleCanvasAgent(BaseAgent):
                     "generation_params": image_params,
                     "safety_score": generation_result.get("safety_score", 1.0),
                     "canvas_version": "v4.0",
-                    "structure_format": "standardized"
+                    "structure_format": "standardized",
+                    "request_canvas_id": str(request_canvas_id)
                 }
             }
             
