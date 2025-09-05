@@ -234,6 +234,9 @@ class SimpleCanvasAgent(BaseAgent):
                     "size": image_params["size"]
                 },
                 "conversationId": input_data.context.get("conversation_id") if input_data.context else None,
+                # 🎨 request_canvas_id를 최상위 레벨에 추가 (프론트엔드 호환성)
+                "requestCanvasId": str(request_canvas_id),
+                "request_canvas_id": str(request_canvas_id),
                 "metadata": {
                     "created_by": "simple_canvas_agent",
                     "generation_params": image_params,

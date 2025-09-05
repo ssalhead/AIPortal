@@ -479,9 +479,34 @@ export const ChatPage: React.FC = () => {
           const inferredType = ConversationCanvasManager.inferCanvasType(response.canvas_data);
           console.log('🔍 Canvas 타입 추론 (sendMessage):', inferredType);
           
-          // getOrCreateCanvas로 통합 처리 - 중복 생성 완전 방지
-          const canvasId = getOrCreateCanvas(sessionIdToUse, inferredType, response.canvas_data);
-          console.log('✅ Canvas 활성화 완료 (중복 방지, sendMessage) - Canvas ID:', canvasId);
+          // 🎯 request_canvas_id 확인하여 개별 요청별 Canvas 생성 결정
+          const requestCanvasId = response.canvas_data.requestCanvasId || 
+                                  response.canvas_data.request_canvas_id || 
+                                  response.canvas_data.metadata?.request_canvas_id;
+          
+          console.log('🔍 sendMessage Canvas 자동 활성화 - requestCanvasId 확인:', {
+            requestCanvasId: response.canvas_data.requestCanvasId,
+            request_canvas_id: response.canvas_data.request_canvas_id,
+            metadata_request_canvas_id: response.canvas_data.metadata?.request_canvas_id,
+            hasRequestCanvasId: !!requestCanvasId
+          });
+          
+          let canvasId;
+          if (requestCanvasId) {
+            // 개별 요청별 Canvas 생성 (v4.0 방식 사용)
+            console.log('✨ 개별 요청 Canvas ID 감지 (자동 활성화):', requestCanvasId);
+            canvasId = useCanvasStore.getState().getOrCreateCanvasV4(
+              sessionIdToUse, 
+              inferredType, 
+              response.canvas_data, 
+              requestCanvasId
+            );
+            console.log('✅ 개별 요청별 Canvas 활성화 완료 (자동):', canvasId);
+          } else {
+            // 기존 방식: 대화별 공유 Canvas
+            canvasId = getOrCreateCanvas(sessionIdToUse, inferredType, response.canvas_data);
+            console.log('✅ 대화별 공유 Canvas 활성화 완료 (자동):', canvasId);
+          }
           
           // 진화형 이미지 세션 처리 (이미지 타입인 경우)
           if (inferredType === 'image' && sessionIdToUse) {
@@ -1514,18 +1539,20 @@ export const ChatPage: React.FC = () => {
                   // 🖼️ 이미지 Canvas: 단순화된 이미지 워크스페이스 사용
                   console.log('🎨 SimpleImageWorkspace 렌더링 - 단순화된 이미지 히스토리 관리');
                   
-                  // Canvas ID에서 requestCanvasId 추출 (형식: conversationId-image-requestCanvasId)
+                  // Canvas ID에서 requestCanvasId 추출 (현재 패턴만: conversationId-image-requestId)
                   let extractedRequestCanvasId: string | undefined;
+                  
                   if (activeItemId && activeItemId.includes('-image-')) {
-                    const parts = activeItemId.split('-image-');
-                    if (parts.length === 2 && parts[1]) {
-                      extractedRequestCanvasId = parts[1];
-                      console.log('🔍 Canvas ID에서 requestCanvasId 추출:', {
-                        activeItemId,
-                        extractedRequestCanvasId
-                      });
+                    const imageParts = activeItemId.split('-image-');
+                    if (imageParts.length === 2 && imageParts[1]) {
+                      extractedRequestCanvasId = imageParts[1];
                     }
                   }
+                  
+                  console.log('🔍 Canvas ID에서 requestCanvasId 추출:', {
+                    activeItemId,
+                    extractedRequestCanvasId
+                  });
                   
                   return (
                     <SimpleImageWorkspace 
@@ -1689,18 +1716,20 @@ export const ChatPage: React.FC = () => {
             const isImageCanvas = activeItem?.type === 'image';
             
             if (isImageCanvas) {
-              // Canvas ID에서 requestCanvasId 추출 (형식: conversationId-image-requestCanvasId)
+              // Canvas ID에서 requestCanvasId 추출 (현재 패턴만: conversationId-image-requestId)
               let extractedRequestCanvasId: string | undefined;
+              
               if (activeItemId && activeItemId.includes('-image-')) {
-                const parts = activeItemId.split('-image-');
-                if (parts.length === 2 && parts[1]) {
-                  extractedRequestCanvasId = parts[1];
-                  console.log('🔍 모바일 Canvas ID에서 requestCanvasId 추출:', {
-                    activeItemId,
-                    extractedRequestCanvasId
-                  });
+                const imageParts = activeItemId.split('-image-');
+                if (imageParts.length === 2 && imageParts[1]) {
+                  extractedRequestCanvasId = imageParts[1];
                 }
               }
+              
+              console.log('🔍 모바일 Canvas ID에서 requestCanvasId 추출:', {
+                activeItemId,
+                extractedRequestCanvasId
+              });
               
               return (
                 <SimpleImageWorkspace 

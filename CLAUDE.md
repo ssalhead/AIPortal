@@ -262,17 +262,19 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 22. ✅ **이미지 자동 새로고침 시스템**: 30단계 접근성 확인, 실제 이미지 로딩 검증, 향상된 cache busting (2025-09-04)
 23. ✅ **snake_case↔camelCase 매핑 보정**: 백엔드-프론트엔드 API 응답 형식 불일치 해결 (2025-09-04)
 24. ✅ **Canvas 이미지 편집 완전 안정화**: primaryImageUrl undefined 오류 완전 제거 및 실시간 새로고침 구현 (2025-09-04)
+25. ✅ **개별 Canvas 자동 열림 시스템**: 요청별 고유 Canvas 생성 및 자동 활성화 구현 (2025-09-05)
 
 
-### 🎉 **프로젝트 현재 상태 (2025-09-04 업데이트)**
+### 🎉 **프로젝트 현재 상태 (2025-09-05 업데이트)**
 
 #### 완성된 주요 시스템
 
-**✅ Canvas v4.0 완전 구현**:
-- 이미지 생성: 대화별 공유 Canvas + 버전 히스토리 관리
+**✅ Canvas v4.1 완전 구현**:
+- 이미지 생성: 요청별 개별 Canvas + 자동 활성화 시스템 (2025-09-05 신규)
 - 기타 기능: 요청별 개별 Canvas + 연속성 작업 지원
 - 영구 보존: 브라우저 세션 간 완전한 상태 복원
 - 중복 방지: 완벽한 1:1:1 데이터 매핑 (성능 75% 향상)
+- 개별 Canvas ID: `{conversationId}-image-{requestCanvasId}` 형식
 
 **✅ 실시간 스트리밍 시스템**:
 - 실제 LLM 스트리밍 (Mock 제거)
@@ -289,13 +291,14 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - 자동 Canvas 모드 전환
 - 6가지 스타일 × 5가지 크기 옵션
 
-**✅ Gemini 이미지 편집 시스템 (2025-09-04 완성)**:
+**✅ Gemini 이미지 편집 시스템 + 개별 Canvas (2025-09-05 완성)**:
 - Gemini 2.5 Flash Image Preview 모델 완전 통합
 - `google.genai` 라이브러리 기반 Vertex AI 연결
 - global 리전 설정으로 최신 모델 지원
 - 실시간 이미지 편집 및 자동 새로고침
 - 30단계 이미지 접근성 확인 시스템
 - snake_case↔camelCase API 매핑 완전 해결
+- **요청별 개별 Canvas 자동 열림**: 이미지 생성 직후 해당 요청만의 Canvas 활성화
 
 
 
@@ -310,9 +313,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ---
 
-**업데이트**: 2025-09-04  
-**버전**: v4.1  
-**상태**: Phase 1+ MVP + Gemini 이미지 편집 완성 - 엔터프라이즈급 안정성과 성능 🎉
+**업데이트**: 2025-09-05  
+**버전**: v4.2  
+**상태**: Phase 1+ MVP + 개별 Canvas 자동 열림 시스템 완성 - 엔터프라이즈급 안정성과 사용성 🎉
 
 ### 💡 **핵심 기술적 혁신**
 
@@ -321,7 +324,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - 한글 최적화 청킹 (15-40자 적응형)
 - 100% 원본 텍스트 보존 보장
 
-**Canvas v4.0 아키텍처**:
+**Canvas v4.2 개별 요청 아키텍처 (2025-09-05 신규)**:
+- **요청별 개별 Canvas**: `{conversationId}-image-{requestCanvasId}` 형식
+- **자동 활성화 시스템**: 이미지 생성 완료 시 해당 요청만의 Canvas 자동 열림
+- **동기화 requestCanvasId 보존**: Canvas Store 동기화 과정에서 개별 ID 유지
 - 중복 방지 시스템: 완벽한 1:1:1 데이터 매핑
 - 영구 보존: PostgreSQL 기반 세션 복원
 - 연속성 지원: 부모-자식 관계 추적

@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { useSimpleImageHistoryStore } from '../../stores/simpleImageHistoryStore';
 import type { SimpleImageHistory } from '../../stores/simpleImageHistoryStore';
+import { useCanvasStore } from '../../stores/canvasStore';
+import { useImageSessionStore } from '../../stores/imageSessionStore';
 
 interface SimpleImageWorkspaceProps {
   conversationId: string;
@@ -71,27 +73,36 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
     lastUpdated
   } = useSimpleImageHistoryStore();
   
+  // Canvas Store와 ImageSession Store에서 현재 활성화된 Canvas 정보 가져오기
+  const { items: canvasItems, activeItemId } = useCanvasStore();
+  const { getSession: getImageSession, hasSession: hasImageSession } = useImageSessionStore();
+  
   // Store 상태를 직접 구독하여 변경 감지
   const allImages = historyMap.get(conversationId) || [];
   
-  // 🎯 개별 요청별 Canvas 시스템: requestCanvasId로 이미지 필터링
+  // 🎯 단순한 이미지 필터링 - 현재 패턴만 지원
   const images = React.useMemo(() => {
+    console.log('🎯 Canvas 이미지 필터링:', {
+      conversationId,
+      requestCanvasId,
+      totalImages: allImages.length
+    });
+    
     if (requestCanvasId) {
-      // 개별 요청별 Canvas: 해당 requestCanvasId와 일치하는 이미지들만 표시
+      // requestCanvasId와 일치하는 이미지만 필터링
       const filtered = allImages.filter(img => img.requestCanvasId === requestCanvasId);
-      console.log('🔍 개별 요청별 Canvas 이미지 필터링:', {
+      console.log('🔍 필터링 결과:', {
         requestCanvasId,
-        totalImages: allImages.length,
-        filteredImages: filtered.length,
-        matchingImages: filtered.map(img => ({ id: img.id, prompt: img.prompt.substring(0, 30) }))
+        filteredCount: filtered.length,
+        matches: filtered.map(img => ({ id: img.id, prompt: img.prompt.substring(0, 30) }))
       });
       return filtered;
     } else {
-      // 기존 통합 방식: 모든 이미지 표시 (하위 호환성)
-      console.log('🔄 기존 통합 방식: 모든 이미지 표시 (하위 호환성):', allImages.length);
+      // requestCanvasId가 없으면 모든 이미지 표시
+      console.log('🔄 모든 이미지 표시:', allImages.length);
       return allImages;
     }
-  }, [allImages, requestCanvasId]);
+  }, [allImages, requestCanvasId, conversationId]);
   
   const selectedImageId = selectedImageMap.get(conversationId);
   const selectedImage = selectedImageId ? images.find(img => img.id === selectedImageId) || null : null;
@@ -112,13 +123,20 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
   
   // 컴포넌트 마운트 시 히스토리 로딩 및 Canvas ID 설정
   useEffect(() => {
-    loadHistory(conversationId);
+    console.log('🔄 SimpleImageWorkspace useEffect 트리거:', {
+      conversationId,
+      requestCanvasId,
+      initialCanvasId
+    });
+    
+    // 히스토리 강제 로딩 (requestCanvasId가 있는 경우 특히 중요)
+    loadHistory(conversationId, true);
     
     // Canvas ID가 제공된 경우 설정
     if (initialCanvasId) {
       setCurrentCanvasId(initialCanvasId);
     }
-  }, [conversationId, loadHistory, initialCanvasId]);
+  }, [conversationId, requestCanvasId, loadHistory, initialCanvasId]);
   
   // 선택된 이미지가 변경될 때 Canvas ID 설정
   useEffect(() => {
@@ -283,6 +301,18 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
       });
       
       console.log('✅ evolveImage 호출 완료:', result);
+      
+      // 새 이미지 생성 후 히스토리 강제 재로드 및 새 이미지 선택
+      setTimeout(async () => {
+        console.log('🔄 편집 완료 후 히스토리 강제 재로드');
+        await loadHistory(conversationId, true);
+        
+        // 새로 생성된 이미지를 선택
+        if (result.id) {
+          setSelectedImage(conversationId, result.id);
+          console.log('✅ 새 편집 이미지 자동 선택:', result.id);
+        }
+      }, 1000);
       
       setNewPrompt('');
       

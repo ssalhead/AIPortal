@@ -881,6 +881,20 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
         // 대응하는 Canvas가 없으면 새로 생성
         console.log(`🆕 버전 ${version.versionNumber}에 대한 Canvas 생성`);
         
+        // 🎯 requestCanvasId 추출 및 개별 Canvas ID 생성
+        const requestCanvasId = version.metadata?.requestCanvasId;
+        let canvasId: string;
+        
+        if (requestCanvasId) {
+          // 개별 요청별 Canvas ID 형식
+          canvasId = `${conversationId}-image-${requestCanvasId}`;
+          console.log(`🎯 개별 Canvas ID 생성: ${canvasId}`);
+        } else {
+          // 기존 공유 Canvas ID 형식
+          canvasId = `canvas_${conversationId}_${version.id}`;
+          console.log(`🔄 공유 Canvas ID 생성: ${canvasId}`);
+        }
+        
         const newCanvasContent = {
           conversationId,
           imageUrl: version.imageUrl,
@@ -891,18 +905,22 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
           status: version.status,
           selectedVersionId: version.id,
           versionId: version.id,
-          versionNumber: version.versionNumber
+          versionNumber: version.versionNumber,
+          requestCanvasId: requestCanvasId  // 🎯 requestCanvasId 보존
         };
         
         const newCanvas: CanvasItem = {
-          id: `canvas_${conversationId}_${version.id}`,
+          id: canvasId,
           type: 'image',
           content: newCanvasContent,
           position: { x: 50 + (index * 20), y: 50 + (index * 20) },
           size: { width: 400, height: 300 },
           createdAt: version.createdAt,
           updatedAt: new Date().toISOString(),
-          metadata: { fromImageSession: true }
+          metadata: { 
+            fromImageSession: true,
+            requestCanvasId: requestCanvasId  // 🎯 metadata에도 저장
+          }
         };
         
         set(state => ({
@@ -913,6 +931,10 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
       } else if (existingCanvas) {
         // 기존 Canvas 업데이트
         console.log(`🔄 기존 Canvas 업데이트: ${existingCanvas.id}`);
+        
+        // 🎯 requestCanvasId 추출 및 보존
+        const requestCanvasId = version.metadata?.requestCanvasId || 
+                               (existingCanvas.content as any)?.requestCanvasId;
         
         const updatedContent = {
           ...existingCanvas.content,
@@ -925,7 +947,8 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
           status: version.status,
           selectedVersionId: version.id,
           versionId: version.id,
-          versionNumber: version.versionNumber
+          versionNumber: version.versionNumber,
+          requestCanvasId: requestCanvasId  // 🎯 requestCanvasId 보존
         };
         
         get().updateItem(existingCanvas.id, { content: updatedContent });
@@ -1788,6 +1811,11 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
           hasImageUrl: !!imageUrl
         });
         
+        // 🎯 requestCanvasId 추출 및 저장
+        const requestCanvasId = canvasData.requestCanvasId || 
+                               canvasData.request_canvas_id || 
+                               canvasData.metadata?.request_canvas_id;
+        
         const versionId = await imageSessionStore.addVersionHybrid(conversationId, {
           prompt: image_data.prompt,
           negativePrompt: image_data.negative_prompt || '',
@@ -1800,7 +1828,8 @@ export const useCanvasStore = create<CanvasState>()(persist((set, get) => ({
             canvasSync: true,
             contentHash: contentHash,     // 🔐 컨텐츠 해시 저장으로 정확한 중복 감지
             contentData: contentData,     // 📊 원본 컨텐츠 데이터 보존
-            deduplicationVersion: '5.0'   // 🏷️ 중복 감지 버전 태그
+            deduplicationVersion: '5.0',   // 🏷️ 중복 감지 버전 태그
+            requestCanvasId: requestCanvasId  // 🎯 개별 Canvas 요청 ID 저장
           },
           isSelected: true
         });

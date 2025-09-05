@@ -562,28 +562,53 @@ export const useSimpleImageHistoryStore = create<SimpleImageHistoryState>((set, 
       }
       
       const data = await response.json();
-      const images: SimpleImageHistory[] = (data.images || []).map((apiImage: any) => ({
-        id: apiImage.id,
-        conversationId: apiImage.conversation_id,
-        prompt: apiImage.prompt,
-        imageUrls: apiImage.image_urls,
-        primaryImageUrl: apiImage.primary_image_url,
-        style: apiImage.style,
-        size: apiImage.size,
-        parentImageId: apiImage.parent_image_id,
-        evolutionType: apiImage.evolution_type,
-        canvasId: apiImage.canvas_id,
-        requestCanvasId: apiImage.request_canvas_id,
-        canvasVersion: apiImage.canvas_version,
-        editMode: apiImage.edit_mode,
-        referenceImageId: apiImage.reference_image_id,
-        isSelected: apiImage.is_selected,
-        isEvolution: apiImage.is_evolution,
-        safetyScore: apiImage.safety_score,
-        fileSizeBytes: apiImage.file_size_bytes,
-        createdAt: new Date(apiImage.created_at),
-        updatedAt: new Date(apiImage.created_at) // API에서 updated_at이 없다면 created_at 사용
-      }));
+      
+      // 🔍 API 응답 디버깅
+      console.log('🔍 이미지 히스토리 API 응답 디버깅:', {
+        conversationId,
+        totalImages: (data.images || []).length,
+        sampleImage: (data.images || [])[0] ? {
+          id: (data.images || [])[0].id,
+          request_canvas_id: (data.images || [])[0].request_canvas_id,
+          canvas_id: (data.images || [])[0].canvas_id,
+          prompt: (data.images || [])[0].prompt?.substring(0, 30)
+        } : null
+      });
+      
+      const images: SimpleImageHistory[] = (data.images || []).map((apiImage: any) => {
+        const mappedImage = {
+          id: apiImage.id,
+          conversationId: apiImage.conversation_id,
+          prompt: apiImage.prompt,
+          imageUrls: apiImage.image_urls,
+          primaryImageUrl: apiImage.primary_image_url,
+          style: apiImage.style,
+          size: apiImage.size,
+          parentImageId: apiImage.parent_image_id,
+          evolutionType: apiImage.evolution_type,
+          canvasId: apiImage.canvas_id,
+          requestCanvasId: apiImage.request_canvas_id,
+          canvasVersion: apiImage.canvas_version,
+          editMode: apiImage.edit_mode,
+          referenceImageId: apiImage.reference_image_id,
+          isSelected: apiImage.is_selected,
+          isEvolution: apiImage.is_evolution,
+          safetyScore: apiImage.safety_score,
+          fileSizeBytes: apiImage.file_size_bytes,
+          createdAt: new Date(apiImage.created_at),
+          updatedAt: new Date(apiImage.created_at) // API에서 updated_at이 없다면 created_at 사용
+        };
+        
+        // 각 이미지별 매핑 디버깅
+        console.log('🔄 이미지 매핑 디버깅:', {
+          id: mappedImage.id,
+          원본_request_canvas_id: apiImage.request_canvas_id,
+          매핑된_requestCanvasId: mappedImage.requestCanvasId,
+          prompt: mappedImage.prompt?.substring(0, 30)
+        });
+        
+        return mappedImage;
+      });
       
       // Store에 저장
       set(state => {
