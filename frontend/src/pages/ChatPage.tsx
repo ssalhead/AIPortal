@@ -1495,9 +1495,24 @@ export const ChatPage: React.FC = () => {
                 if (isImageCanvas) {
                   // 🖼️ 이미지 Canvas: 단순화된 이미지 워크스페이스 사용
                   console.log('🎨 SimpleImageWorkspace 렌더링 - 단순화된 이미지 히스토리 관리');
+                  
+                  // Canvas ID에서 requestCanvasId 추출 (형식: conversationId-image-requestCanvasId)
+                  let extractedRequestCanvasId: string | undefined;
+                  if (activeItemId && activeItemId.includes('-image-')) {
+                    const parts = activeItemId.split('-image-');
+                    if (parts.length === 2 && parts[1]) {
+                      extractedRequestCanvasId = parts[1];
+                      console.log('🔍 Canvas ID에서 requestCanvasId 추출:', {
+                        activeItemId,
+                        extractedRequestCanvasId
+                      });
+                    }
+                  }
+                  
                   return (
                     <SimpleImageWorkspace 
                       conversationId={currentSessionId || ''} 
+                      requestCanvasId={extractedRequestCanvasId}
                     />
                   );
                 } else {
@@ -1656,9 +1671,23 @@ export const ChatPage: React.FC = () => {
             const isImageCanvas = activeItem?.type === 'image';
             
             if (isImageCanvas) {
+              // Canvas ID에서 requestCanvasId 추출 (형식: conversationId-image-requestCanvasId)
+              let extractedRequestCanvasId: string | undefined;
+              if (activeItemId && activeItemId.includes('-image-')) {
+                const parts = activeItemId.split('-image-');
+                if (parts.length === 2 && parts[1]) {
+                  extractedRequestCanvasId = parts[1];
+                  console.log('🔍 모바일 Canvas ID에서 requestCanvasId 추출:', {
+                    activeItemId,
+                    extractedRequestCanvasId
+                  });
+                }
+              }
+              
               return (
                 <SimpleImageWorkspace 
                   conversationId={currentSessionId || ''} 
+                  requestCanvasId={extractedRequestCanvasId}
                 />
               );
             } else {
