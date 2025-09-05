@@ -445,8 +445,9 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
               className="w-full h-24 px-3 py-2 border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
             />
             
-            {/* 프롬프트 최적화 버튼과 옵션 */}
-            <div className="flex items-center justify-between mt-2">
+            {/* 인라인 액션 바 - textarea 바로 아래 */}
+            <div className="flex items-center justify-between mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              {/* 좌측: 옵션들 */}
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-2">
                   <input
@@ -459,34 +460,70 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
                 </label>
               </div>
               
-              <button
-                onClick={handleOptimizePrompt}
-                disabled={!newPrompt.trim() || isOptimizingPrompt}
-                className="flex items-center gap-1 px-3 py-1 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isOptimizingPrompt ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>최적화 중...</span>
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="w-4 h-4" />
-                    <span>✨ 프롬프트 개선</span>
-                  </>
-                )}
-              </button>
+              {/* 우측: 액션 버튼들 */}
+              <div className="flex items-center gap-2">
+                {/* 프롬프트 개선 버튼 */}
+                <button
+                  onClick={handleOptimizePrompt}
+                  disabled={!newPrompt.trim() || isOptimizingPrompt}
+                  className="flex items-center gap-1 px-3 py-1 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isOptimizingPrompt ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>최적화 중...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4" />
+                      <span>✨ 프롬프트 개선</span>
+                    </>
+                  )}
+                </button>
+                
+                {/* 새로고침 버튼 */}
+                <button
+                  onClick={() => loadHistory(conversationId, true)}
+                  disabled={loading}
+                  className="flex items-center gap-1 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 hover:border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  <span>새로고침</span>
+                </button>
+                
+                {/* 이미지 편집 버튼 (메인 액션) */}
+                <button
+                  onClick={handleImageGeneration}
+                  disabled={loading || !newPrompt.trim() || !selectedImage}
+                  className="flex items-center gap-1 px-4 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>편집 중...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4" />
+                      <span>🎨 이미지 편집</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* 단순화된 편집 안내 */}
+          {/* 스마트 편집 안내 */}
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
             <div className="flex items-center gap-2 mb-2">
               <Wand2 className="w-5 h-5 text-purple-600" />
-              <span className="font-medium text-purple-800">스마트 이미지 편집</span>
+              <span className="font-medium text-purple-800">🎨 스마트 이미지 편집</span>
             </div>
-            <p className="text-sm text-purple-700">
-              선택된 이미지를 기반으로 새로운 버전을 생성합니다. 원하는 변경사항을 구체적으로 설명해주세요.
+            <p className="text-sm text-purple-700 mb-2">
+              Gemini 2.5 Flash Image Preview로 자연어 프롬프트를 사용한 간편한 이미지 편집을 제공합니다.
+            </p>
+            <p className="text-xs text-purple-600">
+              예시: "색상을 더 따뜻하게", "배경을 파란 하늘로", "스타일을 수채화로" 등 구체적으로 설명해주세요.
             </p>
           </div>
 
@@ -545,29 +582,10 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
             )}
           </div>
           
-          {/* 액션 버튼들 */}
-          <div className="flex flex-wrap gap-2">
-            {/* 편집 버튼 */}
-            <button
-              onClick={handleImageGeneration}
-              disabled={loading || !newPrompt.trim() || !selectedImage}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-sm">편집 중...</span>
-                </>
-              ) : (
-                <>
-                  <Wand2 className="w-4 h-4" />
-                  <span>이미지 편집</span>
-                </>
-              )}
-            </button>
-
+          {/* 보조 정보 및 기능 */}
+          <div className="flex flex-wrap gap-2 items-center">
             {/* 새 이미지 생성은 채팅창에서만 가능하다는 안내 */}
-            <div className="text-xs text-gray-500 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
+            <div className="text-xs text-gray-500 bg-blue-50 px-3 py-2 rounded-md border border-blue-200 flex-1">
               💡 새 이미지 생성은 채팅창에서만 가능합니다. Canvas에서는 기존 이미지를 편집할 수 있습니다.
             </div>
 
@@ -589,26 +607,9 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
                 <span className="text-sm">Canvas 정보</span>
               </button>
             )}
-            
-            {/* 새로고침 버튼 */}
-            <button
-              onClick={() => loadHistory(conversationId, true)}
-              disabled={loading}
-              className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:opacity-50 transition-colors"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              <span className="text-sm">새로고침</span>
-            </button>
           </div>
 
           {/* 도움말 */}
-          <div className="text-xs text-gray-500 bg-white p-3 rounded border">
-            <div>
-              <span className="font-medium text-purple-600">🎨 스마트 편집 모드:</span> 
-              Gemini 2.5 Flash Image Preview를 사용하여 자연어 프롬프트로 간편한 이미지 편집을 제공합니다. 
-              "색상을 더 따뜻하게", "배경을 파란 하늘로" 등 구체적으로 설명해주세요.
-            </div>
-          </div>
         </div>
       </div>
       
