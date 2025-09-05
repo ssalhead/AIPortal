@@ -44,6 +44,7 @@ class ImageHistory(Base):
     
     # ======= Request-Based Canvas 시스템 =======
     canvas_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="Canvas 요청별 고유 ID")
+    request_canvas_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="개별 요청별 Canvas 고유 ID")
     canvas_version = Column(Integer, default=1, comment="Canvas 내 버전 번호")
     edit_mode = Column(String(20), default="CREATE", comment="생성 모드 (CREATE/EDIT)")
     reference_image_id = Column(UUID(as_uuid=True), ForeignKey("image_history.id", ondelete="SET NULL"), nullable=True, comment="편집 시 참조 이미지 ID")
@@ -144,6 +145,7 @@ class ImageHistory(Base):
             "evolution_type": self.evolution_type,
             "parent_id": str(self.parent_image_id) if self.parent_image_id else None,
             "canvas_id": str(self.canvas_id) if self.canvas_id else None,
+            "request_canvas_id": str(self.request_canvas_id) if self.request_canvas_id else None,
             "canvas_version": self.canvas_version,
             "edit_mode": self.edit_mode,
             "reference_image_id": str(self.reference_image_id) if self.reference_image_id else None,
@@ -188,6 +190,7 @@ class ImageHistory(Base):
         generation_params: Optional[Dict] = None,
         safety_score: float = 1.0,
         canvas_id: Optional[uuid.UUID] = None,
+        request_canvas_id: Optional[uuid.UUID] = None,
         canvas_version: int = 1,
         edit_mode: str = "CREATE",
         reference_image_id: Optional[uuid.UUID] = None,
@@ -215,6 +218,7 @@ class ImageHistory(Base):
             generation_params=generation_params or {},
             safety_score=safety_score,
             canvas_id=canvas_id,
+            request_canvas_id=request_canvas_id,
             canvas_version=canvas_version,
             edit_mode=edit_mode,
             reference_image_id=reference_image_id,

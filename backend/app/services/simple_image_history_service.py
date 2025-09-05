@@ -128,6 +128,7 @@ class SimpleImageHistoryService:
         generation_params: Optional[Dict] = None,
         safety_score: float = 1.0,
         canvas_id: Optional[uuid.UUID] = None,
+        request_canvas_id: Optional[uuid.UUID] = None,
         canvas_version: int = 1,
         edit_mode: str = "CREATE",
         reference_image_id: Optional[uuid.UUID] = None
@@ -149,6 +150,7 @@ class SimpleImageHistoryService:
             generation_params=safe_generation_params,
             safety_score=safety_score,
             canvas_id=canvas_id,
+            request_canvas_id=request_canvas_id,
             canvas_version=canvas_version,
             edit_mode=edit_mode,
             reference_image_id=reference_image_id

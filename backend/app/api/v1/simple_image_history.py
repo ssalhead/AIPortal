@@ -45,6 +45,7 @@ class ImageHistoryResponse(BaseModel):
     parent_image_id: Optional[uuid.UUID] = None
     evolution_type: Optional[str] = None
     canvas_id: Optional[uuid.UUID] = None
+    request_canvas_id: Optional[uuid.UUID] = None
     canvas_version: Optional[int] = None
     edit_mode: Optional[str] = None
     reference_image_id: Optional[uuid.UUID] = None
@@ -204,7 +205,11 @@ async def generate_new_image(
         if not generation_result.get("images"):
             raise HTTPException(status_code=500, detail="이미지 생성에 실패했습니다")
         
-        # 3. 히스토리에 저장 (UUID 직렬화 안전 처리)
+        # 3. 개별 요청별 고유 Canvas ID 생성
+        request_canvas_id = uuid.uuid4()
+        logger.info(f"🎨 새로운 요청별 Canvas ID 생성: {request_canvas_id}")
+        
+        # 4. 히스토리에 저장 (UUID 직렬화 안전 처리)
         safe_generation_params = image_history_service.safe_uuid_to_str({
             "api_response": generation_result,
             "user_request": request.dict()
@@ -219,10 +224,11 @@ async def generate_new_image(
             style=request.style,
             size=request.size,
             safety_score=generation_result.get("safety_score", 1.0),
-            generation_params=safe_generation_params
+            generation_params=safe_generation_params,
+            request_canvas_id=request_canvas_id
         )
         
-        # 4. 백그라운드 작업: 파일 크기 계산
+        # 5. 백그라운드 작업: 파일 크기 계산
         background_tasks.add_task(
             _update_image_file_size,
             new_image.id,
@@ -449,9 +455,10 @@ async def edit_image_with_reference(
         # 4. 편집된 이미지를 히스토리에 저장 (최적화된 Canvas ID 처리)
         # Canvas ID 상속: 참조 이미지와 동일한 Canvas로 그룹화
         canvas_id = reference_image.canvas_id or uuid.uuid4()  # 기존 Canvas ID 상속 또는 새로 생성
+        request_canvas_id = reference_image.request_canvas_id  # 개별 요청 Canvas ID는 상속
         canvas_version = (reference_image.canvas_version or 0) + 1  # 버전 증가
         
-        logger.debug(f"🎨 Canvas 정보: canvas_id={canvas_id}, version={canvas_version}")
+        logger.debug(f"🎨 Canvas 정보: canvas_id={canvas_id}, request_canvas_id={request_canvas_id}, version={canvas_version}")
         
         # 데이터베이스 저장 시도 (실패해도 클라이언트에는 성공 응답)
         try:
@@ -478,6 +485,7 @@ async def edit_image_with_reference(
                 }),
                 safety_score=edit_result.get("safety_score", 1.0),
                 canvas_id=canvas_id,
+                request_canvas_id=request_canvas_id,
                 canvas_version=canvas_version,
                 edit_mode="EDIT",
                 reference_image_id=request.reference_image_id
@@ -516,6 +524,7 @@ async def edit_image_with_reference(
                 },
                 safety_score=edit_result.get("safety_score", 1.0),
                 canvas_id=canvas_id,
+                request_canvas_id=request_canvas_id,
                 canvas_version=canvas_version,
                 edit_mode="EDIT",
                 reference_image_id=request.reference_image_id,

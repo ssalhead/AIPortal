@@ -184,6 +184,10 @@ class SimpleCanvasAgent(BaseAgent):
                     conversation_uuid = uuid.UUID(conversation_id) if isinstance(conversation_id, str) else conversation_id
                     user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
                     
+                    # 🎨 개별 요청별 고유 Canvas ID 생성
+                    request_canvas_id = uuid.uuid4()
+                    logger.info(f"🎨 새로운 요청별 Canvas ID 생성: {request_canvas_id}")
+                    
                     # 데이터베이스에 이미지 히스토리 저장
                     async for db in get_db():
                         saved_image = await self.image_history_service.save_generated_image(
@@ -195,7 +199,8 @@ class SimpleCanvasAgent(BaseAgent):
                             style=image_params["style"],
                             size=image_params["size"],
                             generation_params=image_params,
-                            safety_score=generation_result.get("safety_score", 1.0)
+                            safety_score=generation_result.get("safety_score", 1.0),
+                            request_canvas_id=request_canvas_id
                         )
                         logger.info(f"✅ 이미지 히스토리 저장 완료: {saved_image.id}")
                         break
