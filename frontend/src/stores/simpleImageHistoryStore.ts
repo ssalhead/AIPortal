@@ -151,6 +151,7 @@ export interface SimpleImageHistory {
   parentImageId?: string;
   evolutionType?: string;
   canvasId?: string;
+  requestCanvasId?: string;
   canvasVersion?: number;
   editMode?: string;
   referenceImageId?: string;
@@ -572,6 +573,7 @@ export const useSimpleImageHistoryStore = create<SimpleImageHistoryState>((set, 
         parentImageId: apiImage.parent_image_id,
         evolutionType: apiImage.evolution_type,
         canvasId: apiImage.canvas_id,
+        requestCanvasId: apiImage.request_canvas_id,
         canvasVersion: apiImage.canvas_version,
         editMode: apiImage.edit_mode,
         referenceImageId: apiImage.reference_image_id,

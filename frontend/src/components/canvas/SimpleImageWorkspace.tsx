@@ -28,6 +28,7 @@ import type { SimpleImageHistory } from '../../stores/simpleImageHistoryStore';
 interface SimpleImageWorkspaceProps {
   conversationId: string;
   canvasId?: string; // Canvas ID (편집 전용)
+  requestCanvasId?: string; // 개별 요청별 Canvas ID (새로운 분리 시스템)
   // Canvas는 편집 전용으로 운영됨
 }
 
@@ -36,7 +37,8 @@ type EvolutionType = 'variation' | 'modification' | 'extension' | 'based_on' | '
 
 export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({ 
   conversationId,
-  canvasId: initialCanvasId
+  canvasId: initialCanvasId,
+  requestCanvasId
 }) => {
   // 기본 상태
   const [newPrompt, setNewPrompt] = useState('');
@@ -70,7 +72,27 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
   } = useSimpleImageHistoryStore();
   
   // Store 상태를 직접 구독하여 변경 감지
-  const images = historyMap.get(conversationId) || [];
+  const allImages = historyMap.get(conversationId) || [];
+  
+  // 🎯 개별 요청별 Canvas 시스템: requestCanvasId로 이미지 필터링
+  const images = React.useMemo(() => {
+    if (requestCanvasId) {
+      // 개별 요청별 Canvas: 해당 requestCanvasId와 일치하는 이미지들만 표시
+      const filtered = allImages.filter(img => img.requestCanvasId === requestCanvasId);
+      console.log('🔍 개별 요청별 Canvas 이미지 필터링:', {
+        requestCanvasId,
+        totalImages: allImages.length,
+        filteredImages: filtered.length,
+        matchingImages: filtered.map(img => ({ id: img.id, prompt: img.prompt.substring(0, 30) }))
+      });
+      return filtered;
+    } else {
+      // 기존 통합 방식: 모든 이미지 표시 (하위 호환성)
+      console.log('🔄 기존 통합 방식: 모든 이미지 표시 (하위 호환성):', allImages.length);
+      return allImages;
+    }
+  }, [allImages, requestCanvasId]);
+  
   const selectedImageId = selectedImageMap.get(conversationId);
   const selectedImage = selectedImageId ? images.find(img => img.id === selectedImageId) || null : null;
   const loading = loadingMap.get(conversationId) || false;

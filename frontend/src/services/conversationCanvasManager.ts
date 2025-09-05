@@ -12,10 +12,17 @@ import type { ImageGenerationSession, ImageVersion } from '../types/imageSession
 // Canvas 고유 식별자 생성
 export class ConversationCanvasManager {
   /**
-   * 대화 + 타입별 Canvas 고유 ID 생성
+   * 대화 + 타입별 Canvas 고유 ID 생성 (기존 통합 방식)
    */
   static getCanvasId(conversationId: string, type: CanvasToolType): string {
     return `${conversationId}-${type}`;
+  }
+
+  /**
+   * 개별 요청별 Canvas 고유 ID 생성 (새로운 분리 방식)
+   */
+  static getRequestCanvasId(conversationId: string, type: CanvasToolType, requestCanvasId: string): string {
+    return `${conversationId}-${type}-${requestCanvasId}`;
   }
 
   /**
@@ -88,7 +95,7 @@ export class ConversationCanvasManager {
   }
 
   /**
-   * 새로운 Canvas 아이템 생성
+   * 새로운 Canvas 아이템 생성 (기존 통합 방식)
    */
   static createCanvasItem(conversationId: string, type: CanvasToolType, customContent?: any): CanvasItem {
     const canvasId = this.getCanvasId(conversationId, type);
@@ -111,9 +118,53 @@ export class ConversationCanvasManager {
       updatedAt: new Date().toISOString(),
     };
 
-    console.log('✨ Canvas Manager - 새 Canvas 아이템 생성:', {
+    console.log('✨ Canvas Manager - 새 Canvas 아이템 생성 (통합):', {
       canvasId,
       conversationId,
+      type,
+      hasCustomContent: !!customContent
+    });
+
+    return newItem;
+  }
+
+  /**
+   * 개별 요청별 Canvas 아이템 생성 (새로운 분리 방식)
+   */
+  static createRequestCanvasItem(
+    conversationId: string, 
+    type: CanvasToolType, 
+    requestCanvasId: string, 
+    customContent?: any
+  ): CanvasItem {
+    const canvasId = this.getRequestCanvasId(conversationId, type, requestCanvasId);
+    const defaultContent = this.createDefaultContent(type, conversationId);
+    
+    // 커스텀 콘텐츠가 있으면 병합, 요청별 메타데이터 추가
+    const finalContent = customContent ? {
+      ...defaultContent,
+      ...customContent,
+      conversationId, // conversationId는 항상 유지
+      requestCanvasId // 개별 요청 ID 추가
+    } : {
+      ...defaultContent,
+      requestCanvasId
+    };
+
+    const newItem: CanvasItem = {
+      id: canvasId, // 요청별 고유 ID 사용
+      type,
+      content: finalContent,
+      position: { x: 50, y: 50 },
+      size: type === 'text' ? { width: 300, height: 200 } : { width: 400, height: 300 },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    console.log('✨ Canvas Manager - 개별 요청별 Canvas 아이템 생성:', {
+      canvasId,
+      conversationId,
+      requestCanvasId,
       type,
       hasCustomContent: !!customContent
     });
@@ -155,10 +206,23 @@ export class ConversationCanvasManager {
   }
 
   /**
-   * 특정 대화의 특정 타입 Canvas 찾기
+   * 특정 대화의 특정 타입 Canvas 찾기 (기존 통합 방식)
    */
   static findCanvas(items: CanvasItem[], conversationId: string, type: CanvasToolType): CanvasItem | null {
     const canvasId = this.getCanvasId(conversationId, type);
+    return items.find(item => item.id === canvasId) || null;
+  }
+
+  /**
+   * 개별 요청별 Canvas 찾기 (새로운 분리 방식)
+   */
+  static findRequestCanvas(
+    items: CanvasItem[], 
+    conversationId: string, 
+    type: CanvasToolType, 
+    requestCanvasId: string
+  ): CanvasItem | null {
+    const canvasId = this.getRequestCanvasId(conversationId, type, requestCanvasId);
     return items.find(item => item.id === canvasId) || null;
   }
 

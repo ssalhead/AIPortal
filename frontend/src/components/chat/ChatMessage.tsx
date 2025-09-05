@@ -132,17 +132,36 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
     
     if (canvasData && conversationId) {
-      console.log('🎨 Artifact 버튼 클릭 (새 시스템) - Canvas 데이터:', canvasData);
-      console.log('🎨 Artifact 버튼 클릭 (새 시스템) - conversationId:', conversationId);
+      console.log('🎨 Artifact 버튼 클릭 (개별 요청 시스템) - Canvas 데이터:', canvasData);
+      console.log('🎨 Artifact 버튼 클릭 (개별 요청 시스템) - conversationId:', conversationId);
       
       // ConversationCanvasManager를 통한 타입 추론
       const inferredType = ConversationCanvasManager.inferCanvasType(canvasData);
       
       console.log('🔍 Canvas 타입 추론:', inferredType);
       
-      // getOrCreateCanvas 사용 - 중복 생성 완전 방지
-      const canvasId = getOrCreateCanvas(conversationId, inferredType, canvasData);
-      console.log('✅ Canvas 활성화 완료 (중복 방지) - Canvas ID:', canvasId);
+      // 🎯 개별 요청 Canvas ID 확인 (새로운 분리 시스템)
+      const hasRequestCanvasId = canvasData.requestCanvasId || canvasData.request_canvas_id;
+      
+      if (hasRequestCanvasId) {
+        // 개별 요청별 Canvas 생성/조회 (v4.0 방식 사용)
+        console.log('✨ 개별 요청 Canvas ID 감지:', hasRequestCanvasId);
+        const requestCanvasId = await useCanvasStore.getState().getOrCreateCanvasV4(
+          conversationId, 
+          inferredType, 
+          {
+            ...canvasData,
+            requestCanvasId: hasRequestCanvasId
+          },
+          hasRequestCanvasId // 4번째 매개변수로 requestId 전달
+        );
+        console.log('✅ 개별 요청별 Canvas 활성화 완료 - Canvas ID:', requestCanvasId);
+      } else {
+        // 기존 통합 Canvas 방식 (하위 호환성)
+        console.log('🔄 기존 통합 Canvas 방식 사용 (하위 호환성)');
+        const canvasId = await getOrCreateCanvas(conversationId, inferredType, canvasData);
+        console.log('✅ 통합 Canvas 활성화 완료 - Canvas ID:', canvasId);
+      }
       
       // 🎨 ImageSession 버전 선택 동기화 (이미지 타입인 경우)
       if (inferredType === 'image' && (canvasData.image_data || canvasData.imageUrl || canvasData.images)) {
