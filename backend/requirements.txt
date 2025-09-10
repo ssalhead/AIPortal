@@ -56,6 +56,10 @@ structlog==24.1.0
 tenacity==8.2.3
 langsmith>=0.2.0
 
+# LangGraph 고급 기능
+langgraph-checkpoint-postgres>=1.0.0
+langgraph-checkpoint>=1.0.0
+
 # Canvas Export System
 pillow>=10.3.0
 reportlab>=4.4.0

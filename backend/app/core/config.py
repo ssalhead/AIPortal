@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     DEBUG_PERFORMANCE: bool = False
     DEBUG_STREAMING: bool = False
     
+    # Feature Flag 설정 (LangGraph 점진적 도입용)
+    FEATURE_FLAG_SALT: str = "aiportal-feature-flag-salt-2025"  # 해시 시드
+    LANGGRAPH_ENABLED: bool = True  # 전역 LangGraph 활성화 스위치
+    LANGGRAPH_FALLBACK_ENABLED: bool = True  # 자동 fallback 활성화
+    LANGGRAPH_PERFORMANCE_TRACKING: bool = True  # 성능 비교 추적
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -15,6 +15,12 @@ from app.agents.workers.information_gap_analyzer import information_gap_analyzer
 from app.agents.workers.simple_canvas import SimpleCanvasAgent
 from app.agents.routing.intent_classifier import dynamic_intent_classifier, IntentType
 
+# LangGraph 에이전트 imports (100% 활성화)
+from app.agents.langgraph.web_search_langgraph import langgraph_web_search_agent
+from app.agents.langgraph.canvas_langgraph import langgraph_canvas_agent
+from app.agents.langgraph.information_gap_langgraph import langgraph_information_gap_analyzer
+from app.core.feature_flags import is_langgraph_enabled, LangGraphFeatureFlags
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,15 +40,40 @@ class SupervisorAgent(BaseAgent):
         
         # Worker 에이전트 등록 (information_gap_analyzer는 내부 로직으로 사용)
         self.simple_canvas_agent = SimpleCanvasAgent()  # 단순화된 Canvas 에이전트
+        
+        # 🚀 100% LangGraph 에이전트 맵 (최고 성능)
         self.workers = {
-            TaskType.WEB_SEARCH: web_search_agent,
-            TaskType.CANVAS: self.simple_canvas_agent,
-            # TaskType.DEEP_RESEARCH: deep_search_agent,  # 추후 구현
-            # TaskType.MULTIMODAL_RAG: multimodal_rag_agent,  # 추후 구현
+            TaskType.WEB_SEARCH: self._get_web_search_agent,          # LangGraph WebSearch
+            TaskType.CANVAS: self._get_canvas_agent,                  # LangGraph Canvas
+            TaskType.GENERAL_CHAT: None,                              # 직접 처리
+            TaskType.DEEP_RESEARCH: self._get_web_search_agent,       # WebSearch로 대체
+            TaskType.MULTI_STEP: self._get_web_search_agent,          # WebSearch로 대체
+            TaskType.CLARIFICATION: self._get_information_gap_agent,  # Information Gap Analyzer
         }
         
-        # 정보 분석기는 내부적으로 사용
-        self.information_analyzer = information_gap_analyzer
+        # 🚀 정보 분석기 LangGraph 버전으로 100% 전환
+        self.information_analyzer = langgraph_information_gap_analyzer
+
+    def _get_web_search_agent(self, user_id: str = None):
+        """
+        🚀 100% LangGraph WebSearch 에이전트 (운영 중단 제약 없음)
+        """
+        self.logger.info(f"🚀 LangGraph WebSearchAgent 100% 활성화 (사용자: {user_id})")
+        return langgraph_web_search_agent
+
+    def _get_canvas_agent(self, user_id: str = None):
+        """
+        🚀 100% LangGraph Canvas 에이전트 (운영 중단 제약 없음)
+        """
+        self.logger.info(f"🚀 LangGraph CanvasAgent 100% 활성화 (사용자: {user_id})")
+        return langgraph_canvas_agent
+
+    def _get_information_gap_agent(self, user_id: str = None):
+        """
+        🚀 100% LangGraph Information Gap Analyzer (운영 중단 제약 없음)
+        """
+        self.logger.info(f"🚀 LangGraph Information Gap Analyzer 100% 활성화 (사용자: {user_id})")
+        return langgraph_information_gap_analyzer
     
     async def execute(self, input_data: AgentInput, model: str = "claude-sonnet", progress_callback=None) -> AgentOutput:
         """Supervisor 에이전트 실행 - 지능형 라우팅 시스템 사용"""
@@ -128,8 +159,8 @@ class SupervisorAgent(BaseAgent):
                 # 복합 작업 처리
                 return await self._handle_multi_step_task(input_data, model, start_time, reasoning, progress_callback)
             
-            # 5단계: 단일 Worker 에이전트 선택 및 실행
-            worker_agent = self._select_worker(primary_intent)
+            # 5단계: 단일 Worker 에이전트 선택 및 실행 (하이브리드 지원)
+            worker_agent = self._select_worker(primary_intent, input_data.user_id)
             
             if worker_agent:
                 self.logger.info(f"🚀 작업 위임: {primary_intent.value} → {worker_agent.agent_id}")
@@ -166,7 +197,7 @@ class SupervisorAgent(BaseAgent):
             # 오류 발생 시 fallback 분류 시도
             try:
                 fallback_intent = self._emergency_fallback_classification(input_data.query)
-                worker_agent = self._select_worker(fallback_intent)
+                worker_agent = self._select_worker(fallback_intent, input_data.user_id)
                 
                 if worker_agent:
                     self.logger.info(f"🆘 긴급 fallback 실행: {fallback_intent.value}")
@@ -204,8 +235,8 @@ class SupervisorAgent(BaseAgent):
         self.logger.warning("레거시 메서드 _smart_fallback_analysis 호출됨")
         return self._emergency_fallback_classification(query)
     
-    def _select_worker(self, intent_type: IntentType) -> Optional[BaseAgent]:
-        """의도 유형에 따른 Worker 에이전트 선택"""
+    def _select_worker(self, intent_type: IntentType, user_id: str = None) -> Optional[BaseAgent]:
+        """의도 유형에 따른 Worker 에이전트 선택 (하이브리드 지원)"""
         # IntentType을 TaskType으로 매핑 (하위 호환성)
         task_type_mapping = {
             IntentType.WEB_SEARCH: TaskType.WEB_SEARCH,
@@ -217,15 +248,23 @@ class SupervisorAgent(BaseAgent):
         }
         
         mapped_task_type = task_type_mapping.get(intent_type, TaskType.GENERAL_CHAT)
-        worker = self.workers.get(mapped_task_type)
+        worker_or_selector = self.workers.get(mapped_task_type)
         
-        if worker:
-            return worker
+        if worker_or_selector:
+            # 함수인 경우 (하이브리드 선택기) 실행
+            if callable(worker_or_selector):
+                return worker_or_selector(user_id)
+            else:
+                # 기존 Worker 에이전트 인스턴스인 경우
+                return worker_or_selector
         
         # 해당 Worker가 없는 경우 대체 Worker 선택
         if intent_type in [IntentType.DEEP_RESEARCH, IntentType.MULTI_STEP]:
             # Deep Research나 Multi-step이 없으면 Web Search로 대체
-            return self.workers.get(TaskType.WEB_SEARCH)
+            web_search_selector = self.workers.get(TaskType.WEB_SEARCH)
+            if callable(web_search_selector):
+                return web_search_selector(user_id)
+            return web_search_selector
         elif intent_type == IntentType.CLARIFICATION:
             # 명확화 요청은 일반 채팅으로 처리
             return None  # 직접 처리
