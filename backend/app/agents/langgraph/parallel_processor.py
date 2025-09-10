@@ -935,8 +935,11 @@ JSON 형식으로 상세한 병렬 처리 계획을 제공하세요."""),
         logger.info(f"🚀 LangGraph 병렬 처리 시스템 실행 시작 (사용자: {input_data.user_id})")
         
         try:
-            # 성능 모니터링 시작
-            await langgraph_monitor.start_execution("langgraph_parallel_processor")
+            # 성능 모니터링 시작 (optional)
+            try:
+                await langgraph_monitor.start_execution("langgraph_parallel_processor")
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 시작 실패 (무시됨): {monitoring_error}")
             
             # 초기 상태 설정 (Reducer 기본값 설정)
             initial_state = ParallelProcessingState(
@@ -961,14 +964,18 @@ JSON 형식으로 상세한 병렬 처리 계획을 제공하세요."""),
                 should_fallback=False
             )
             
-            # LangGraph 워크플로우 실행
-            if self.checkpointer:
-                app = self.workflow.compile(checkpointer=self.checkpointer)
-                config = {"configurable": {"thread_id": f"parallel_{input_data.user_id}_{input_data.session_id}"}}
-                final_state = await app.ainvoke(initial_state, config=config)
-            else:
-                app = self.workflow.compile()
-                final_state = await app.ainvoke(initial_state)
+            # LangGraph 워크플로우 실행 (에러 안전 처리)
+            try:
+                if self.checkpointer:
+                    app = self.workflow.compile(checkpointer=self.checkpointer)
+                    config = {"configurable": {"thread_id": f"parallel_{input_data.user_id}_{input_data.session_id}"}}
+                    final_state = await app.ainvoke(initial_state, config=config)
+                else:
+                    app = self.workflow.compile()
+                    final_state = await app.ainvoke(initial_state)
+            except Exception as workflow_error:
+                logger.error(f"❌ LangGraph 병렬 처리 워크플로우 실행 실패: {workflow_error}")
+                raise workflow_error  # 상위로 전파하여 fallback 처리
             
             # 결과 처리
             execution_time_ms = int((time.time() - start_time) * 1000)
@@ -994,12 +1001,17 @@ JSON 형식으로 상세한 병렬 처리 계획을 제공하세요."""),
             performance_metrics = final_state.get("performance_metrics", {})
             aggregated_results = final_state.get("aggregated_results", {})
             
-            await langgraph_monitor.track_execution(
-                agent_type="langgraph_parallel_processor",
-                execution_time=execution_time_ms / 1000,
-                success=True,
-                user_id=input_data.user_id
-            )
+            try:
+                await langgraph_monitor.track_execution(
+                    agent_name="langgraph_parallel_processor",
+                    execution_time=execution_time_ms / 1000,
+                    status="success",
+                    query=input_data.query,
+                    response_length=len(final_output) if final_output else 0,
+                    user_id=input_data.user_id
+                )
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 기록 실패 (무시됨): {monitoring_error}")
             
             result = AgentOutput(
                 result=final_output,
@@ -1024,13 +1036,18 @@ JSON 형식으로 상세한 병렬 처리 계획을 제공하세요."""),
         except Exception as e:
             logger.error(f"❌ LangGraph 병렬 처리 시스템 실행 실패: {e}")
             
-            await langgraph_monitor.track_execution(
-                agent_type="langgraph_parallel_processor",
-                execution_time=(time.time() - start_time),
-                success=False,
-                error_message=str(e),
-                user_id=input_data.user_id
-            )
+            try:
+                await langgraph_monitor.track_execution(
+                    agent_name="langgraph_parallel_processor",
+                    execution_time=(time.time() - start_time),
+                    status="error",
+                    query=input_data.query,
+                    response_length=0,
+                    user_id=input_data.user_id,
+                    error_message=str(e)
+                )
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 기록 실패 (무시됨): {monitoring_error}")
             
             execution_time_ms = int((time.time() - start_time) * 1000)
             

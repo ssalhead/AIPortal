@@ -21,6 +21,9 @@ from app.db.session import AsyncSessionLocal
 from app.db.models.image_generation import GeneratedImage
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Logger 초기화 (import 오류 처리를 위해 먼저 정의)
+logger = logging.getLogger(__name__)
+
 # Google GenAI 클라이언트 import (Imagen 4용)
 try:
     from google import genai
@@ -51,8 +54,6 @@ try:
 except ImportError:
     logger.warning("PIL 라이브러리가 설치되지 않음. 'pip install pillow'로 설치해주세요.")
     PILImage = None
-
-logger = logging.getLogger(__name__)
 
 
 class ImageGenerationService:
@@ -1668,12 +1669,13 @@ class ImageGenerationService:
             
             loop = asyncio.get_event_loop()
             
-            # 텍스트 생성 모델로 프롬프트 최적화
-            text_model = gemini_genai.GenerativeModel("gemini-2.5-flash")
-            
+            # Gemini 클라이언트로 프롬프트 최적화
             response = await loop.run_in_executor(
                 None,
-                lambda: text_model.generate_content(optimization_prompt)
+                lambda: self.gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[optimization_prompt]
+                )
             )
             
             if response.text:
@@ -1686,6 +1688,64 @@ class ImageGenerationService:
                 
         except Exception as e:
             logger.error(f"❌ 프롬프트 최적화 실패: {e}")
+            return original_prompt
+
+    async def improve_prompt_same_language(self, original_prompt: str) -> str:
+        """
+        프롬프트를 입력된 언어 그대로 유지하면서 개선
+        
+        Args:
+            original_prompt: 사용자가 입력한 원본 프롬프트
+            
+        Returns:
+            동일 언어로 개선된 프롬프트
+        """
+        
+        try:
+            if not self.gemini_client:
+                logger.warning("⚠️ Gemini 클라이언트 없음 - 프롬프트 개선 건너뛰기")
+                return original_prompt
+            
+            # 언어 감지 및 동일 언어로 개선하는 메타 프롬프트
+            improvement_prompt = f"""
+다음 사용자 입력을 동일한 언어로 더 구체적이고 명확하게 개선해주세요:
+
+사용자 입력: "{original_prompt}"
+
+요구사항:
+1. 입력된 언어와 동일한 언어로 응답 (한글→한글, 영어→영어)
+2. 원래 의도를 정확히 유지
+3. 더 구체적이고 상세한 설명 추가
+4. 이미지 편집에 유용한 세부사항 포함
+5. 자연스럽고 명확한 표현 사용
+6. 개선된 프롬프트만 출력 (설명 없이)
+
+예시:
+- "빨간 모자 추가" → "이미지의 인물 머리 위에 선명한 빨간색 베레모나 야구모자를 자연스럽게 추가해주세요. 모자는 머리 크기에 맞게 적절한 비율로 배치하고, 기존 헤어스타일과 조화롭게 어울리도록 해주세요."
+- "배경 바꿔줘" → "현재 배경을 완전히 새로운 배경으로 교체해주세요. 인물이나 주요 객체는 그대로 유지하면서 배경만 자연스럽게 변경하고, 조명과 색감도 새로운 배경에 맞게 조정해주세요."
+"""
+            
+            loop = asyncio.get_event_loop()
+            
+            # Gemini 클라이언트로 프롬프트 개선
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[improvement_prompt]
+                )
+            )
+            
+            if response.text:
+                improved_prompt = response.text.strip()
+                logger.debug(f"✨ 프롬프트 개선: '{original_prompt}' → '{improved_prompt[:50]}...'")
+                return improved_prompt
+            else:
+                logger.warning("⚠️ 개선된 프롬프트 생성 실패 - 빈 응답")
+                return original_prompt
+                
+        except Exception as e:
+            logger.error(f"❌ 프롬프트 개선 실패: {e}")
             return original_prompt
 
 

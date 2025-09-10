@@ -24,7 +24,7 @@ class ChatMessage(BaseModel):
     """채팅 메시지 모델"""
     message: str
     model: str = "gemini"  # 기본값은 gemini
-    agent_type: str = "web_search"  # 기본값은 web_search
+    agent_type: str = "none"  # 기본값은 none (일반 채팅)
     session_id: Optional[str] = None  # 대화 세션 ID
     include_citations: bool = True  # 인용 정보 포함 여부
     max_sources: int = 10  # 최대 출처 개수

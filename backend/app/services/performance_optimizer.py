@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import gc
 
 from app.utils.logger import get_logger
-from app.services.langgraph_monitor import monitor
+from app.services.langgraph_monitor import langgraph_monitor
 
 logger = get_logger(__name__)
 

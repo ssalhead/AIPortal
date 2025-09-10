@@ -630,8 +630,11 @@ JSON 형식으로 구체적인 실행 계획을 제공하세요."""),
         logger.info(f"🚀 LangGraph Canvas Agent 실행 시작 (사용자: {input_data.user_id})")
         
         try:
-            # 성능 모니터링 시작
-            await langgraph_monitor.start_execution("langgraph_canvas")
+            # 성능 모니터링 시작 (optional)
+            try:
+                await langgraph_monitor.start_execution("langgraph_canvas")
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 시작 실패 (무시됨): {monitoring_error}")
             
             # 초기 상태 설정
             initial_state = CanvasState(
@@ -658,14 +661,18 @@ JSON 형식으로 구체적인 실행 계획을 제공하세요."""),
                 should_fallback=False
             )
             
-            # LangGraph 워크플로우 실행
-            if self.checkpointer:
-                app = self.workflow.compile(checkpointer=self.checkpointer)
-                config = {"configurable": {"thread_id": f"canvas_{input_data.user_id}_{input_data.session_id}"}}
-                final_state = await app.ainvoke(initial_state, config=config)
-            else:
-                app = self.workflow.compile()
-                final_state = await app.ainvoke(initial_state)
+            # LangGraph 워크플로우 실행 (에러 안전 처리)
+            try:
+                if self.checkpointer:
+                    app = self.workflow.compile(checkpointer=self.checkpointer)
+                    config = {"configurable": {"thread_id": f"canvas_{input_data.user_id}_{input_data.session_id}"}}
+                    final_state = await app.ainvoke(initial_state, config=config)
+                else:
+                    app = self.workflow.compile()
+                    final_state = await app.ainvoke(initial_state)
+            except Exception as workflow_error:
+                logger.error(f"❌ LangGraph Canvas 워크플로우 실행 실패: {workflow_error}")
+                raise workflow_error  # 상위로 전파하여 fallback 처리
             
             # 결과 처리
             execution_time_ms = int((time.time() - start_time) * 1000)
@@ -675,12 +682,17 @@ JSON 형식으로 구체적인 실행 계획을 제공하세요."""),
                 logger.warning(f"⚠️ LangGraph Canvas 에러 발생하였으나 최적 결과 반환: {final_state.get('errors', [])}")
             
             # 성공적인 LangGraph 결과 반환
-            await langgraph_monitor.track_execution(
-                agent_type="langgraph_canvas",
-                execution_time=execution_time_ms / 1000,
-                success=True,
-                user_id=input_data.user_id
-            )
+            try:
+                await langgraph_monitor.track_execution(
+                    agent_name="langgraph_canvas",
+                    execution_time=execution_time_ms / 1000,
+                    status="success",
+                    query=input_data.query,
+                    response_length=len(response_message) if response_message else 0,
+                    user_id=input_data.user_id
+                )
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 기록 실패 (무시됨): {monitoring_error}")
             
             final_canvas = final_state.get("final_canvas", {})
             canvas_data = final_canvas.get("data", final_state.get("canvas_data", {}))
@@ -718,13 +730,18 @@ JSON 형식으로 구체적인 실행 계획을 제공하세요."""),
         except Exception as e:
             logger.error(f"❌ LangGraph Canvas Agent 실행 실패: {e}")
             
-            await langgraph_monitor.track_execution(
-                agent_type="langgraph_canvas",
-                execution_time=(time.time() - start_time),
-                success=False,
-                error_message=str(e),
-                user_id=input_data.user_id
-            )
+            try:
+                await langgraph_monitor.track_execution(
+                    agent_name="langgraph_canvas",
+                    execution_time=(time.time() - start_time),
+                    status="error",
+                    query=input_data.query,
+                    response_length=0,
+                    user_id=input_data.user_id,
+                    error_message=str(e)
+                )
+            except Exception as monitoring_error:
+                logger.warning(f"⚠️ 모니터링 기록 실패 (무시됨): {monitoring_error}")
             
             # 운영 중단 제약 없으므로 에러 시에도 최적화된 fallback 응답 반환
             execution_time_ms = int((time.time() - start_time) * 1000)

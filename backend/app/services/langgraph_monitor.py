@@ -90,6 +90,25 @@ class LangGraphMonitor:
         
         logger.info("🔍 LangGraph 모니터링 시스템 초기화 완료")
     
+    async def start_execution(self, agent_name: str) -> Dict[str, Any]:
+        """
+        에이전트 실행 시작 추적
+        
+        Args:
+            agent_name: 에이전트 이름
+            
+        Returns:
+            시작 컨텍스트 정보
+        """
+        start_time = time.time()
+        context = {
+            "agent_name": agent_name,
+            "start_time": start_time,
+            "timestamp": datetime.now()
+        }
+        logger.debug(f"🚀 {agent_name} 실행 시작 추적")
+        return context
+    
     async def track_execution(
         self,
         agent_type: AgentType,
@@ -101,7 +120,8 @@ class LangGraphMonitor:
         user_id: Optional[str] = None,
         memory_usage: Optional[float] = None,
         error_message: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs  # 호환성을 위한 추가 인수 지원
     ) -> None:
         """
         에이전트 실행 메트릭 추적

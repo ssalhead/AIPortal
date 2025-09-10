@@ -585,23 +585,32 @@ async def optimize_edit_prompt(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    편집 프롬프트를 Gemini 2.5 Flash 이미지 편집에 최적화
+    편집 프롬프트를 동일 언어로 개선
     
-    사용자가 입력한 간단한 프롬프트를 이미지 편집에 최적화된 형태로 변환합니다.
+    사용자가 입력한 프롬프트를 동일 언어로 더 구체적이고 상세하게 개선합니다.
     """
     
+    logger.info(f"🚀 /optimize-prompt 엔드포인트 호출됨")
+    logger.info(f"👤 사용자: {current_user.get('id', 'unknown')}")
+    logger.info(f"📝 요청 데이터: {request}")
+    logger.info(f"✨ 프롬프트 개선 요청: '{request.prompt[:50]}...' (전체길이: {len(request.prompt)})")
+    
     try:
-        logger.info(f"✨ 프롬프트 최적화 요청: '{request.prompt[:50]}...'")
+        # 프롬프트 개선 (동일 언어 유지)
+        logger.info("🔄 image_generation_service.improve_prompt_same_language 호출 시작")
+        optimized_prompt = await image_generation_service.improve_prompt_same_language(request.prompt)
+        logger.info(f"🔄 개선된 프롬프트 반환됨: '{optimized_prompt[:50]}...' (전체길이: {len(optimized_prompt)})")
         
-        # 프롬프트 최적화
-        optimized_prompt = await image_generation_service.optimize_edit_prompt(request.prompt)
-        
-        # 최적화 효과 분석 (간단한 휴리스틱)
+        # 개선 효과 분석 (간단한 휴리스틱)
         improvement_notes = None
-        if len(optimized_prompt) > len(request.prompt) * 1.5:
+        if len(optimized_prompt) > len(request.prompt) * 1.2:
             improvement_notes = "프롬프트가 더 구체적이고 상세해졌습니다."
+        elif optimized_prompt != request.prompt:
+            improvement_notes = "프롬프트 표현이 개선되었습니다."
         elif "using the provided image" in optimized_prompt.lower():
             improvement_notes = "이미지 편집에 특화된 문구가 추가되었습니다."
+        
+        logger.info(f"📊 개선사항 분석: {improvement_notes}")
         
         response = PromptOptimizationResponse(
             original_prompt=request.prompt,
@@ -609,14 +618,18 @@ async def optimize_edit_prompt(
             improvement_notes=improvement_notes
         )
         
-        logger.info(f"✅ 프롬프트 최적화 완료: {len(request.prompt)} → {len(optimized_prompt)} 문자")
+        logger.info(f"✅ 프롬프트 개선 완료: {len(request.prompt)} → {len(optimized_prompt)} 문자")
+        logger.info(f"🎯 응답 데이터: {response}")
         return response
         
     except Exception as e:
-        logger.error(f"❌ 프롬프트 최적화 실패: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"❌ 프롬프트 개선 실패: {str(e)}")
+        logger.error(f"❌ 에러 상세: {error_trace}")
         raise HTTPException(
             status_code=500, 
-            detail=f"프롬프트 최적화 중 오류가 발생했습니다: {str(e)}"
+            detail=f"프롬프트 개선 중 오류가 발생했습니다: {str(e)}"
         )
 
 

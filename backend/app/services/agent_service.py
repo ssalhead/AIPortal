@@ -28,6 +28,7 @@ class AgentService:
     def __init__(self):
         self.supervisor = supervisor_agent
         self.simple_canvas_agent = SimpleCanvasAgent()
+    
         self.agents = {
             "supervisor": supervisor_agent,
             "web_search": web_search_agent,

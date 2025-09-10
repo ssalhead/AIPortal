@@ -51,7 +51,6 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
   const [selectedSize, setSelectedSize] = useState<string>('1024x1024');
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(initialCanvasId || null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
-  const [optimizePrompt, setOptimizePrompt] = useState<boolean>(false);
   const [isOptimizingPrompt, setIsOptimizingPrompt] = useState<boolean>(false);
   
   // Canvas 관련 상태
@@ -80,26 +79,37 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
   // Store 상태를 직접 구독하여 변경 감지
   const allImages = historyMap.get(conversationId) || [];
   
-  // 🎯 단순한 이미지 필터링 - 현재 패턴만 지원
+  // 🎯 정확한 이미지 필터링 - 매칭 성공만 허용
   const images = React.useMemo(() => {
-    console.log('🎯 Canvas 이미지 필터링:', {
+    console.log('🎯 Canvas 이미지 필터링 (정확한 매칭만):', {
       conversationId,
       requestCanvasId,
-      totalImages: allImages.length
+      totalImages: allImages.length,
+      allImageIds: allImages.map(img => ({ id: img.id, requestCanvasId: img.requestCanvasId, prompt: img.prompt.substring(0, 30) }))
     });
     
     if (requestCanvasId) {
-      // requestCanvasId와 일치하는 이미지만 필터링
+      // requestCanvasId와 정확히 일치하는 이미지만 필터링
       const filtered = allImages.filter(img => img.requestCanvasId === requestCanvasId);
-      console.log('🔍 필터링 결과:', {
+      console.log('🔍 정확한 매칭 결과:', {
         requestCanvasId,
         filteredCount: filtered.length,
-        matches: filtered.map(img => ({ id: img.id, prompt: img.prompt.substring(0, 30) }))
+        matches: filtered.map(img => ({ id: img.id, requestCanvasId: img.requestCanvasId, prompt: img.prompt.substring(0, 30) }))
       });
+      
+      // 매칭 실패 시에도 빈 배열 반환 (폴백 없음)
+      if (filtered.length === 0) {
+        console.warn('⚠️ requestCanvasId 매칭 실패 - 빈 Canvas 표시:', {
+          requestCanvasId,
+          totalImages: allImages.length,
+          reason: 'No exact requestCanvasId match found'
+        });
+      }
+      
       return filtered;
     } else {
-      // requestCanvasId가 없으면 모든 이미지 표시
-      console.log('🔄 모든 이미지 표시:', allImages.length);
+      // requestCanvasId가 없으면 모든 이미지 표시 (기존 Canvas 호환)
+      console.log('🔄 모든 이미지 표시 (requestCanvasId 없음):', allImages.length);
       return allImages;
     }
   }, [allImages, requestCanvasId, conversationId]);
@@ -214,7 +224,24 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
     
     setIsOptimizingPrompt(true);
     try {
-      console.log('✨ 프롬프트 최적화 시작:', newPrompt);
+      console.log('🚀 프롬프트 최적화 시작:', newPrompt);
+      
+      const token = localStorage.getItem('token');
+      console.log('🔑 토큰 확인:', {
+        hasToken: !!token,
+        tokenLength: token ? token.length : 0,
+        tokenValue: token ? `${token.substring(0, 10)}...` : 'null'
+      });
+      
+      console.log('📝 API 요청 준비:', {
+        url: '/api/v1/images/history/optimize-prompt',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? 'Bearer [토큰있음]' : '토큰없음'
+        },
+        body: { prompt: newPrompt }
+      });
       
       const response = await fetch('/api/v1/images/history/optimize-prompt', {
         method: 'POST',
@@ -227,15 +254,30 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
         })
       });
       
+      console.log('📡 API 응답 상태:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+      
       if (!response.ok) {
-        throw new Error(`프롬프트 최적화 실패: ${response.status}`);
+        const errorText = await response.text();
+        console.error('❌ API 응답 에러:', errorText);
+        throw new Error(`프롬프트 최적화 실패: ${response.status} - ${errorText}`);
       }
       
       const result = await response.json();
       console.log('✅ 프롬프트 최적화 완료:', result);
+      console.log('🔍 응답 필드들:', Object.keys(result));
       
       // 최적화된 프롬프트로 교체
-      setNewPrompt(result.optimized_prompt);
+      if (result && result.optimized_prompt) {
+        console.log('🔄 프롬프트 교체:', result.optimized_prompt);
+        setNewPrompt(result.optimized_prompt);
+      } else {
+        console.warn('⚠️ optimized_prompt 필드가 응답에 없습니다. 전체 응답:', result);
+      }
       
       // 사용자에게 개선 사항 알림 (간단한 콘솔 로그)
       if (result.improvement_notes) {
@@ -244,8 +286,11 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
       
     } catch (error) {
       console.error('❌ 프롬프트 최적화 실패:', error);
+      console.error('❌ 에러 타입:', typeof error);
+      console.error('❌ 에러 스택:', error.stack);
     } finally {
       setIsOptimizingPrompt(false);
+      console.log('🏁 프롬프트 최적화 작업 종료');
     }
   };
 
@@ -277,7 +322,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
         selectedImageId: selectedImage.id,
         newPrompt: newPrompt,
         evolutionType: 'gemini_edit',
-        optimizePrompt,
+        optimizePrompt: false,
         source: 'canvas',
         workflowMode: 'gemini_edit',
         canvasId: currentCanvasId,
@@ -291,7 +336,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
         selectedImageId: selectedImage.id,
         newPrompt: newPrompt,
         evolutionType: 'gemini_edit' as any,
-        optimizePrompt,
+        optimizePrompt: false,
         source: 'canvas', // REQUEST SOURCE: CANVAS  
         workflowMode: 'gemini_edit',
         canvasId: currentCanvasId,
@@ -317,7 +362,8 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
       setNewPrompt('');
       
       console.log(`✅ Gemini 이미지 편집이 완료되었으며 새 버전이 생성되었습니다!`);
-      if (optimizePrompt) {
+      // 편집 시 프롬프트 최적화는 비활성화됨 (프롬프트 개선 버튼으로 대체)
+      if (false) {
         console.log(`📈 프롬프트 최적화 기능이 적용되었습니다.`);
       }
       
@@ -391,7 +437,7 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
                 EDIT
               </span>
             </div>
-            <div>{getImageCount(conversationId)}개 이미지</div>
+            <div>{images.length}개 이미지</div>
           </div>
         </div>
       </div>
@@ -446,21 +492,8 @@ export const SimpleImageWorkspace: React.FC<SimpleImageWorkspaceProps> = ({
             />
             
             {/* 인라인 액션 바 - textarea 바로 아래 */}
-            <div className="flex items-center justify-between mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-              {/* 좌측: 옵션들 */}
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={optimizePrompt}
-                    onChange={(e) => setOptimizePrompt(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span className="text-sm text-gray-600">편집 시 프롬프트 최적화</span>
-                </label>
-              </div>
-              
-              {/* 우측: 액션 버튼들 */}
+            <div className="flex items-center justify-end mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              {/* 액션 버튼듡 */}
               <div className="flex items-center gap-2">
                 {/* 프롬프트 개선 버튼 */}
                 <button

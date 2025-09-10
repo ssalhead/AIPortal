@@ -44,29 +44,57 @@ class ConversationHistoryService:
                 limit=limit
             )
             
+            # 🚀 성능 최적화: 단일 쿼리로 모든 메시지 통계 조회
+            if conversations_raw:
+                conversation_ids = [str(conv.id) for conv in conversations_raw]
+                
+                # 단일 쿼리로 모든 대화의 메시지 수와 최신 메시지 조회
+                message_stats_query = text("""
+                    WITH latest_messages AS (
+                        SELECT DISTINCT ON (conversation_id) 
+                            conversation_id,
+                            content,
+                            created_at,
+                            ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) as rn
+                        FROM messages 
+                        WHERE conversation_id = ANY(:conversation_ids)
+                    ),
+                    message_counts AS (
+                        SELECT conversation_id, COUNT(*) as message_count
+                        FROM messages 
+                        WHERE conversation_id = ANY(:conversation_ids)
+                        GROUP BY conversation_id
+                    )
+                    SELECT 
+                        mc.conversation_id,
+                        mc.message_count,
+                        lm.content as last_message_content,
+                        lm.created_at as last_message_at
+                    FROM message_counts mc
+                    LEFT JOIN latest_messages lm ON mc.conversation_id = lm.conversation_id AND lm.rn = 1
+                """)
+                
+                result = await session.execute(message_stats_query, {"conversation_ids": conversation_ids})
+                message_stats = {row.conversation_id: row for row in result}
+            else:
+                message_stats = {}
+            
             conversations = []
             for conv in conversations_raw:
-                # 메시지 개수 계산
-                message_repo = MessageRepository(session)
-                messages = await message_repo.get_conversation_messages(
-                    conversation_id=str(conv.id),
-                    limit=1  # 최신 메시지 1개만
-                )
-                
-                last_message = messages[0] if messages else None
-                message_count = len(await message_repo.get_conversation_messages(str(conv.id), limit=1000))
+                conv_id = str(conv.id)
+                stats = message_stats.get(conv_id)
                 
                 conversations.append({
-                    'id': str(conv.id),
+                    'id': conv_id,
                     'title': conv.title,
                     'model': conv.model,
                     'agent_type': conv.agent_type,
                     'status': conv.status.value,
                     'created_at': conv.created_at.isoformat(),
                     'updated_at': conv.updated_at.isoformat(),
-                    'message_count': message_count,
-                    'last_message_at': last_message.created_at.isoformat() if last_message else None,
-                    'last_message_preview': last_message.content[:100] if last_message else ''
+                    'message_count': stats.message_count if stats else 0,
+                    'last_message_at': stats.last_message_at.isoformat() if (stats and stats.last_message_at) else None,
+                    'last_message_preview': stats.last_message_content[:100] if (stats and stats.last_message_content) else ''
                 })
             
             # 총 개수 조회

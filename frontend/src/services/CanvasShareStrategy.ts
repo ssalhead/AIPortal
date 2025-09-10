@@ -86,9 +86,12 @@ export class CanvasShareStrategy {
         
       case 'request':
         // 요청별 개별 Canvas (텍스트, 마인드맵 등)
-        const timestamp = Date.now();
-        const uniqueId = requestId || `${timestamp}`;
-        return `${conversationId}-${type}-${uniqueId}`;
+        if (!requestId) {
+          console.error('❌ Canvas ID 생성 실패: requestId가 필요하지만 제공되지 않음', { conversationId, type });
+          // 에러 상황에서만 timestamp 사용 (디버깅 목적)
+          return `${conversationId}-${type}-${Date.now()}`;
+        }
+        return `${conversationId}-${type}-${requestId}`;
         
       case 'hybrid':
         // 하이브리드 전략 (미래 확장용)

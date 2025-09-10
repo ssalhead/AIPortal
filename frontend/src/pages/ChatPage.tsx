@@ -799,9 +799,9 @@ export const ChatPage: React.FC = () => {
                                          (result.canvas_data.image_data.images?.length > 0 || 
                                           result.canvas_data.image_data.image_urls?.length > 0);
                   
-                  // 🎨 ConversationCanvasManager를 사용한 통합 스트리밍 Canvas 활성화
+                  // 🎨 스트리밍 Canvas 처리 - requestId 기반 Canvas는 이미 생성됨
                   setTimeout(() => {
-                    console.log('🎨 스트리밍 Canvas 활성화 시작:', {
+                    console.log('🎨 스트리밍 완료 처리 시작 (중복 생성 방지):', {
                       type: result.canvas_data.type,
                       sessionId: sessionIdToUse,
                       isImageComplete
@@ -811,9 +811,8 @@ export const ChatPage: React.FC = () => {
                     const inferredType = ConversationCanvasManager.inferCanvasType(result.canvas_data);
                     console.log('🔍 Canvas 타입 추론 (스트리밍):', inferredType);
                     
-                    // getOrCreateCanvas로 통합 처리 - 중복 생성 완전 방지
-                    const canvasId = getOrCreateCanvas(sessionIdToUse, inferredType, result.canvas_data);
-                    console.log('✅ 스트리밍 Canvas 활성화 완료 (중복 방지) - Canvas ID:', canvasId);
+                    // 중복 Canvas 생성 제거 - requestId 기반 Canvas는 이미 존재함
+                    console.log('✅ 스트리밍 완료 처리 완료 (중복 생성 방지)');
                     
                     // 진화형 이미지 세션 처리 (이미지 타입인 경우)
                     if (inferredType === 'image' && sessionIdToUse) {

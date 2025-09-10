@@ -475,15 +475,42 @@ JSON 형식으로 분석 결과를 제공하세요.""")
             )
             
             # LangGraph 워크플로우 실행
-            if self.checkpointer:
-                # 체크포인터 사용 (상태 영속성)
-                app = self.workflow.compile(checkpointer=self.checkpointer)
-                config = {"configurable": {"thread_id": f"{input_data.user_id}_{input_data.session_id}"}}
-                final_state = await app.ainvoke(initial_state, config=config)
-            else:
-                # 체크포인터 없이 실행
-                app = self.workflow.compile()
-                final_state = await app.ainvoke(initial_state)
+            try:
+                if self.checkpointer:
+                    # 체크포인터 사용 (상태 영속성)
+                    logger.info("🔧 LangGraph 워크플로우 컴파일 중 (with checkpointer)...")
+                    app = self.workflow.compile(checkpointer=self.checkpointer)
+                    config = {"configurable": {"thread_id": f"{input_data.user_id}_{input_data.session_id}"}}
+                    final_state = await app.ainvoke(initial_state, config=config)
+                else:
+                    # 체크포인터 없이 실행
+                    logger.info("🔧 LangGraph 워크플로우 컴파일 중 (without checkpointer)...")
+                    app = self.workflow.compile()
+                    final_state = await app.ainvoke(initial_state)
+                
+                logger.info("✅ LangGraph 워크플로우 실행 성공")
+                
+            except Exception as workflow_error:
+                logger.error(f"❌ LangGraph 워크플로우 실행 실패: {workflow_error}")
+                logger.info("🔄 Legacy 에이전트로 즉시 fallback")
+                
+                # 워크플로우 실행 실패 시 즉시 Legacy로 fallback
+                try:
+                    from app.services.langgraph_monitor import AgentType, ExecutionStatus
+                    await langgraph_monitor.track_execution(
+                        agent_type=AgentType.LANGGRAPH,
+                        agent_name="langgraph_web_search",
+                        execution_time=(time.time() - start_time),
+                        status=ExecutionStatus.ERROR,
+                        query=input_data.query,
+                        response_length=0,
+                        user_id=input_data.user_id,
+                        error_message=f"Workflow execution failed: {str(workflow_error)}"
+                    )
+                except Exception as monitor_error:
+                    logger.warning(f"모니터링 기록 실패: {monitor_error}")
+                
+                return await self.legacy_agent.execute(input_data, model, progress_callback)
             
             # 결과 처리
             execution_time_ms = int((time.time() - start_time) * 1000)
@@ -491,16 +518,39 @@ JSON 형식으로 분석 결과를 제공하세요.""")
             # 에러가 있거나 fallback이 필요한 경우
             if final_state.get("should_fallback", False) or len(final_state.get("errors", [])) > 0:
                 logger.warning("🔄 LangGraph 실행 실패 - Legacy 모드로 fallback")
-                langgraph_monitor.record_fallback("langgraph_web_search", f"Errors: {final_state.get('errors', [])}")
+                # Fallback 메트릭 기록
+                try:
+                    from app.services.langgraph_monitor import AgentType, ExecutionStatus
+                    await langgraph_monitor.track_execution(
+                        agent_type=AgentType.LANGGRAPH,
+                        agent_name="langgraph_web_search",
+                        execution_time=execution_time_ms / 1000,
+                        status=ExecutionStatus.FALLBACK,
+                        query=input_data.query,
+                        response_length=0,
+                        user_id=input_data.user_id,
+                        error_message=f"Errors: {final_state.get('errors', [])}"
+                    )
+                except Exception as monitor_error:
+                    logger.warning(f"모니터링 기록 실패: {monitor_error}")
+                
                 return await self.legacy_agent.execute(input_data, model, progress_callback)
             
             # 성공적인 LangGraph 결과 반환
-            await langgraph_monitor.track_execution(
-                agent_type="langgraph_web_search",
-                execution_time=execution_time_ms / 1000,
-                success=True,
-                user_id=input_data.user_id
-            )
+            final_response = final_state.get("final_response", "검색 결과를 생성할 수 없습니다.")
+            try:
+                from app.services.langgraph_monitor import AgentType, ExecutionStatus
+                await langgraph_monitor.track_execution(
+                    agent_type=AgentType.LANGGRAPH,
+                    agent_name="langgraph_web_search",
+                    execution_time=execution_time_ms / 1000,
+                    status=ExecutionStatus.SUCCESS,
+                    query=input_data.query,
+                    response_length=len(final_response),
+                    user_id=input_data.user_id
+                )
+            except Exception as monitor_error:
+                logger.warning(f"모니터링 기록 실패: {monitor_error}")
             
             result = AgentOutput(
                 result=final_state.get("final_response", "검색 결과를 생성할 수 없습니다."),

@@ -1,97 +1,204 @@
 # FastAPI 및 웹 프레임워크
-fastapi==0.115.6
-uvicorn[standard]==0.33.0
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+starlette==0.41.3
 python-multipart==0.0.18
 websockets==13.1
 
 # 데이터 검증 및 설정
-pydantic==2.10.3
-pydantic-settings==2.7.0
+pydantic==2.11.7
+pydantic-core==2.33.2
+pydantic-settings==2.10.1
 python-dotenv==1.0.1
 
 # 데이터베이스
-sqlalchemy==2.0.36
-alembic==1.14.0
+sqlalchemy==2.0.43
 asyncpg==0.30.0
+psycopg==3.2.10
+psycopg-pool==3.2.6
 psycopg2-binary==2.9.10
-redis==5.2.0
-boto3==1.35.85
 
-# LangChain 및 AI (최신 사용 가능 버전, OpenAI 제거)
-langchain==0.3.12
-langchain-core==0.3.29
-langchain-community==0.3.12
-langgraph==0.2.74
-langchain-anthropic==0.3.18
-langchain-google-genai==2.0.10
-langchain-aws==0.2.9
-anthropic>=0.60.0
-google-genai>=1.0.0
+# AWS 및 클라우드
+boto3==1.40.27
+botocore==1.40.27
+s3transfer==0.14.0
+
+# LangChain 및 AI (실제 설치된 최신 버전 반영)
+langchain==0.3.27
+langchain-core==0.3.75
+langchain-community==0.3.29
+langchain-text-splitters==0.3.11
+langchain-anthropic==0.3.19
+langchain-google-genai==2.1.10
+langchain-aws==0.2.31
+anthropic==0.66.0
+google-genai==1.35.0
+
+# LangGraph 시스템
+langgraph==0.6.7
+langgraph-checkpoint==2.1.1
+langgraph-checkpoint-postgres==2.0.23
+langgraph-prebuilt==0.6.4
+langgraph-sdk==0.2.6
+
+# LangSmith 모니터링
+langsmith==0.4.27
+
+# Google AI API
+google-ai-generativelanguage==0.6.18
+google-api-core==2.25.1
+google-api-python-client==2.181.0
+google-auth==2.40.3
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+googleapis-common-protos==1.70.0
 
 # 벡터 저장소 및 검색
-opensearch-py==2.4.2
-numpy==1.26.3
-pandas==2.1.4
+opensearch-py==3.0.0
+numpy==1.26.4
+pandas==2.3.2
 
 # 문서 처리
-pypdf==3.17.4
-python-docx==1.1.0
-pillow==10.2.0
-beautifulsoup4==4.12.2
-markdownify==0.11.6
+beautifulsoup4==4.13.5
+markdownify==1.2.0
+soupsieve==2.8
 
-# 보안
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-cryptography==41.0.7
-bleach==6.1.0
+# 보안 및 인증
+python-jose==3.5.0
+passlib==1.7.4
+bcrypt==4.3.0
+cryptography==45.0.7
+bleach==6.2.0
 
 # HTTP 클라이언트
-httpx==0.26.0
-aiohttp==3.9.1
+httpx==0.28.1
+httpx-sse==0.4.1
+httpcore==1.0.9
+aiohttp==3.12.15
+aiosignal==1.4.0
+aiohappyeyeballs==2.6.1
+
+# JSON 및 데이터 처리
+orjson==3.11.3
+jsonpatch==1.33
+jsonpointer==3.0.0
+ormsgpack==1.10.0
 
 # 유틸리티 & 로깅
-python-json-logger==2.0.7
-structlog==24.1.0
-tenacity==8.2.3
-langsmith>=0.2.0
-
-# LangGraph 고급 기능
-langgraph-checkpoint-postgres>=1.0.0
-langgraph-checkpoint>=1.0.0
+python-json-logger==3.3.0
+structlog==25.4.0
+tenacity==9.1.2
+dataclasses-json==0.6.7
+marshmallow==3.26.1
 
 # Canvas Export System
-pillow>=10.3.0
-reportlab>=4.4.0
-fpdf2>=2.8.0
-cairosvg>=2.8.0
-wand>=0.6.0
-weasyprint>=66.0
-qrcode[pil]>=8.2
-opencv-python>=4.9.0
-numpy>=1.24.0
+pillow==11.3.0
+reportlab==4.4.3
+fpdf2==2.8.4
+cairosvg==2.8.2
+cairocffi==1.7.1
+wand==0.6.13
+weasyprint==66.0
+qrcode==8.2
+opencv-python==4.8.1.78
+fonttools==4.59.2
+pyphen==0.17.2
+pydyf==0.11.0
+tinycss2==1.4.0
+tinyhtml5==2.0.0
 
-# Cloud Storage
-boto3>=1.34.0
-dropbox>=12.0.0
-google-api-python-client>=2.110.0
-google-auth-httplib2>=0.2.0
-google-auth-oauthlib>=1.2.0
+# 템플릿 및 렌더링
+jinja2==3.1.6
+markupsafe==3.0.2
 
-# 개발 도구
-pytest==7.4.4
-pytest-asyncio==0.23.3
-black==23.12.1
-ruff==0.1.11
-mypy==1.8.0
-pre-commit==3.6.0
+# 클라우드 스토리지
+dropbox==12.0.2
+stone==3.3.1
 
-# 모니터링
-opentelemetry-api==1.22.0
-opentelemetry-sdk==1.22.0
-opentelemetry-instrumentation-fastapi==0.43b0
-prometheus-client==0.19.0
+# 압축 및 인코딩
+brotli==1.1.0
+zopfli==0.2.3.post1
+zstandard==0.24.0
 
-# 이미지 시리즈 생성 시스템
-Jinja2==3.1.4  # 프롬프트 템플릿 렌더링
-asyncio-mqtt==0.16.2  # 실시간 진행 상황 추적 (선택사항)
+# 암호화 및 보안
+rsa==4.9.1
+ecdsa==0.19.1
+pyasn1==0.6.1
+pyasn1-modules==0.4.2
+
+# 네트워킹 및 HTTP
+requests==2.32.5
+requests-oauthlib==2.0.0
+requests-toolbelt==1.0.0
+urllib3==2.5.0
+certifi==2025.8.3
+
+# 비동기 처리
+anyio==4.10.0
+sniffio==1.3.1
+async-timeout==4.0.3
+asyncio-mqtt
+greenlet==3.2.4
+
+# gRPC
+grpcio==1.74.0
+grpcio-status==1.74.0
+
+# 파일 처리
+aiofiles==24.1.0
+filetype==1.2.0
+defusedxml==0.7.1
+
+# 시스템 유틸리티
+psutil==7.0.0
+packaging==25.0
+distro==1.9.0
+click==8.2.1
+
+# 기타 유틸리티
+pycparser==2.23
+cffi==2.0.0
+idna==3.10
+charset-normalizer==3.4.3
+six==1.17.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tzdata==2025.2
+cachetools==5.5.2
+attrs==25.3.0
+exceptiongroup==1.3.0
+xxhash==3.5.0
+multidict==6.6.4
+yarl==1.20.1
+frozenlist==1.7.0
+propcache==0.3.2
+
+# 텍스트 및 문서 처리
+cssselect2==0.8.0
+webencodings==0.5.1
+ply==3.11
+pyparsing==3.2.3
+
+# 모니터링 및 이벤트
+events==0.5
+
+# 타입 체크
+typing-inspect==0.9.0
+typing-inspection==0.4.1
+typing-extensions==4.15.0
+mypy-extensions==1.1.0
+
+# 프로토콜 버퍼
+proto-plus==1.26.1
+protobuf==6.32.0
+
+# API 관련
+uritemplate==4.2.0
+oauthlib==3.3.3
+
+# 개발 도구 (선택사항)
+uvloop==0.21.0
+watchfiles==1.1.0
+httptools==0.6.4
+h11==0.16.0
+jiter==0.10.0
